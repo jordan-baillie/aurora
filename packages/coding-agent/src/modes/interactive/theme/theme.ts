@@ -26,6 +26,54 @@ const ColorValueSchema = Type.Union([
 
 type ColorValue = Static<typeof ColorValueSchema>;
 
+// ── Phase 1: glyph + layout schemas ──────────────────────────────────────
+const GlyphValueSchema = Type.String();
+const NumberSchema = Type.Number();
+
+const RoleStyleSchema = Type.Union([Type.Literal("none"), Type.Literal("smallcaps"), Type.Literal("bracket")]);
+
+const MessageStyleSchema = Type.Union([Type.Literal("fill"), Type.Literal("rule"), Type.Literal("bracket")]);
+
+const ToolBlockStyleSchema = Type.Union([Type.Literal("fill"), Type.Literal("indent"), Type.Literal("ascii-box")]);
+
+const InputAreaStyleSchema = Type.Union([Type.Literal("border-fill"), Type.Literal("rules-only")]);
+
+const GlyphsSchema = Type.Optional(
+	Type.Object({
+		hr: Type.Optional(GlyphValueSchema),
+		bullet1: Type.Optional(GlyphValueSchema),
+		bullet2: Type.Optional(GlyphValueSchema),
+		middleDot: Type.Optional(GlyphValueSchema),
+		ellipsis: Type.Optional(GlyphValueSchema),
+		submitHint: Type.Optional(GlyphValueSchema),
+		spinnerFrames: Type.Optional(Type.Array(GlyphValueSchema)),
+		spinnerIntervalMs: Type.Optional(NumberSchema),
+		toolDots: Type.Optional(GlyphValueSchema),
+		toolBracketOpen: Type.Optional(GlyphValueSchema),
+		toolBracketClose: Type.Optional(GlyphValueSchema),
+		successPill: Type.Optional(GlyphValueSchema),
+		errorPill: Type.Optional(GlyphValueSchema),
+		workingLabel: Type.Optional(GlyphValueSchema),
+	}),
+);
+
+const LayoutSchema = Type.Optional(
+	Type.Object({
+		messageStyle: Type.Optional(MessageStyleSchema),
+		toolBlockStyle: Type.Optional(ToolBlockStyleSchema),
+		inputAreaStyle: Type.Optional(InputAreaStyleSchema),
+		roleLabelStyle: Type.Optional(RoleStyleSchema),
+		userRoleLabel: Type.Optional(Type.String()),
+		assistantRoleLabel: Type.Optional(Type.String()),
+		toolGutter: Type.Optional(NumberSchema),
+		blankLineBetweenTurns: Type.Optional(NumberSchema),
+		footerStyle: Type.Optional(Type.Union([Type.Literal("two-line"), Type.Literal("single-line")])),
+		footerSeparator: Type.Optional(GlyphValueSchema),
+		asciiOnly: Type.Optional(Type.Boolean()),
+	}),
+);
+// ── End glyph + layout schemas ────────────────────────────────────────────
+
 const ThemeJsonSchema = Type.Object({
 	$schema: Type.Optional(Type.String()),
 	name: Type.String(),
@@ -97,9 +145,110 @@ const ThemeJsonSchema = Type.Object({
 			infoBg: Type.Optional(ColorValueSchema),
 		}),
 	),
+	glyphs: GlyphsSchema,
+	layout: LayoutSchema,
 });
 
 type ThemeJson = Static<typeof ThemeJsonSchema>;
+
+// ── Phase 1: exported types + defaults ───────────────────────────────────
+
+/** Style variants for message bubble rendering. */
+export type MessageStyle = "fill" | "rule" | "bracket";
+/** Style variants for tool-call block rendering. */
+export type ToolBlockStyle = "fill" | "indent" | "ascii-box";
+/** Style variants for the input-area chrome. */
+export type InputAreaStyle = "border-fill" | "rules-only";
+/** Style variants for role-label headers. */
+export type RoleStyle = "none" | "smallcaps" | "bracket";
+/** Style variants for the footer row. */
+export type FooterStyle = "two-line" | "single-line";
+
+/** Keys for the string-valued glyph table (excludes spinnerFrames / spinnerIntervalMs). */
+export type GlyphName =
+	| "hr"
+	| "bullet1"
+	| "bullet2"
+	| "middleDot"
+	| "ellipsis"
+	| "submitHint"
+	| "toolDots"
+	| "toolBracketOpen"
+	| "toolBracketClose"
+	| "successPill"
+	| "errorPill"
+	| "workingLabel";
+
+/** Map from each layout key to its concrete return type (used by the generic accessor). */
+export type LayoutValueByName = {
+	messageStyle: MessageStyle;
+	toolBlockStyle: ToolBlockStyle;
+	inputAreaStyle: InputAreaStyle;
+	roleLabelStyle: RoleStyle;
+	userRoleLabel: string;
+	assistantRoleLabel: string;
+	toolGutter: number;
+	blankLineBetweenTurns: number;
+	footerStyle: FooterStyle;
+	footerSeparator: string;
+	asciiOnly: boolean;
+};
+
+export type LayoutName = keyof LayoutValueByName;
+
+type ResolvedGlyphs = {
+	hr: string;
+	bullet1: string;
+	bullet2: string;
+	middleDot: string;
+	ellipsis: string;
+	submitHint: string;
+	spinnerFrames: string[];
+	spinnerIntervalMs: number;
+	toolDots: string;
+	toolBracketOpen: string;
+	toolBracketClose: string;
+	successPill: string;
+	errorPill: string;
+	workingLabel: string;
+};
+
+type ResolvedLayout = LayoutValueByName;
+
+/** Default glyph values — matches the existing dark/light visual identity. */
+export const DEFAULT_GLYPHS: ResolvedGlyphs = {
+	hr: "─",
+	bullet1: "•",
+	bullet2: "◦",
+	middleDot: " · ",
+	ellipsis: "…",
+	submitHint: "⏎",
+	spinnerFrames: ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"],
+	spinnerIntervalMs: 80,
+	toolDots: "·",
+	toolBracketOpen: "[",
+	toolBracketClose: "]",
+	successPill: "ok",
+	errorPill: "fail",
+	workingLabel: "Working...",
+};
+
+/** Default layout values — preserves the current dark/light filled-background look. */
+export const DEFAULT_LAYOUT: ResolvedLayout = {
+	messageStyle: "fill",
+	toolBlockStyle: "fill",
+	inputAreaStyle: "border-fill",
+	roleLabelStyle: "none",
+	userRoleLabel: "You",
+	assistantRoleLabel: "Assistant",
+	toolGutter: 0,
+	blankLineBetweenTurns: 1,
+	footerStyle: "two-line",
+	footerSeparator: "   ",
+	asciiOnly: false,
+};
+
+// ── End Phase 1 defaults ──────────────────────────────────────────────────
 
 const validateThemeJson = Compile(ThemeJsonSchema);
 
@@ -326,12 +475,20 @@ export class Theme {
 	private fgColors: Map<ThemeColor, string>;
 	private bgColors: Map<ThemeBg, string>;
 	private mode: ColorMode;
+	private resolvedGlyphs: ResolvedGlyphs;
+	private resolvedLayout: ResolvedLayout;
 
 	constructor(
 		fgColors: Record<ThemeColor, string | number>,
 		bgColors: Record<ThemeBg, string | number>,
 		mode: ColorMode,
-		options: { name?: string; sourcePath?: string; sourceInfo?: SourceInfo } = {},
+		options: {
+			name?: string;
+			sourcePath?: string;
+			sourceInfo?: SourceInfo;
+			glyphs?: ResolvedGlyphs;
+			layout?: ResolvedLayout;
+		} = {},
 	) {
 		this.name = options.name;
 		this.sourcePath = options.sourcePath;
@@ -345,6 +502,11 @@ export class Theme {
 		for (const [key, value] of Object.entries(bgColors) as [ThemeBg, string | number][]) {
 			this.bgColors.set(key, bgAnsi(value, mode));
 		}
+		this.resolvedGlyphs = options.glyphs ?? {
+			...DEFAULT_GLYPHS,
+			spinnerFrames: [...DEFAULT_GLYPHS.spinnerFrames],
+		};
+		this.resolvedLayout = options.layout ?? { ...DEFAULT_LAYOUT };
 	}
 
 	fg(color: ThemeColor, text: string): string {
@@ -418,6 +580,72 @@ export class Theme {
 	getBashModeBorderColor(): (str: string) => string {
 		return (str: string) => this.fg("bashMode", str);
 	}
+
+	// ── Phase 1: glyph + layout accessors ─────────────────────────────────
+
+	/** Return the named string glyph, falling back to the built-in default. */
+	glyph(name: GlyphName): string {
+		return this.resolvedGlyphs[name];
+	}
+
+	/** Generic typed layout accessor — Phase 2 renderers use this. */
+	layout<K extends LayoutName>(name: K): LayoutValueByName[K] {
+		return this.resolvedLayout[name] as LayoutValueByName[K];
+	}
+
+	/** Resolved spinner animation frames. */
+	spinnerFrames(): string[] {
+		return [...this.resolvedGlyphs.spinnerFrames];
+	}
+
+	/** Resolved spinner animation interval in milliseconds. */
+	spinnerIntervalMs(): number {
+		return this.resolvedGlyphs.spinnerIntervalMs;
+	}
+
+	/** Whether the theme is configured for ASCII-only output. */
+	isAsciiOnly(): boolean {
+		return this.resolvedLayout.asciiOnly;
+	}
+
+	/** Human-readable role label for the given conversation role. */
+	roleLabel(role: "user" | "assistant"): string {
+		return role === "user" ? this.resolvedLayout.userRoleLabel : this.resolvedLayout.assistantRoleLabel;
+	}
+
+	messageStyle(): MessageStyle {
+		return this.resolvedLayout.messageStyle;
+	}
+
+	toolBlockStyle(): ToolBlockStyle {
+		return this.resolvedLayout.toolBlockStyle;
+	}
+
+	inputAreaStyle(): InputAreaStyle {
+		return this.resolvedLayout.inputAreaStyle;
+	}
+
+	roleLabelStyle(): RoleStyle {
+		return this.resolvedLayout.roleLabelStyle;
+	}
+
+	toolGutter(): number {
+		return this.resolvedLayout.toolGutter;
+	}
+
+	blankLineBetweenTurns(): number {
+		return this.resolvedLayout.blankLineBetweenTurns;
+	}
+
+	footerStyle(): FooterStyle {
+		return this.resolvedLayout.footerStyle;
+	}
+
+	footerSeparator(): string {
+		return this.resolvedLayout.footerSeparator;
+	}
+
+	// ── End Phase 1 accessors ──────────────────────────────────────────────
 }
 
 // ============================================================================
@@ -429,12 +657,17 @@ let BUILTIN_THEMES: Record<string, ThemeJson> | undefined;
 function getBuiltinThemes(): Record<string, ThemeJson> {
 	if (!BUILTIN_THEMES) {
 		const themesDir = getThemesDir();
-		const darkPath = path.join(themesDir, "dark.json");
-		const lightPath = path.join(themesDir, "light.json");
 		BUILTIN_THEMES = {
-			dark: JSON.parse(fs.readFileSync(darkPath, "utf-8")) as ThemeJson,
-			light: JSON.parse(fs.readFileSync(lightPath, "utf-8")) as ThemeJson,
+			dark: JSON.parse(fs.readFileSync(path.join(themesDir, "dark.json"), "utf-8")) as ThemeJson,
+			light: JSON.parse(fs.readFileSync(path.join(themesDir, "light.json"), "utf-8")) as ThemeJson,
 		};
+		// Phase 1: load new built-in themes when present (bundled with the package)
+		for (const name of ["editorial", "brutalist"]) {
+			const p = path.join(themesDir, `${name}.json`);
+			if (fs.existsSync(p)) {
+				BUILTIN_THEMES[name] = JSON.parse(fs.readFileSync(p, "utf-8")) as ThemeJson;
+			}
+		}
 	}
 	return BUILTIN_THEMES;
 }
@@ -593,9 +826,45 @@ function createTheme(themeJson: ThemeJson, mode?: ColorMode, sourcePath?: string
 			fgColors[key as ThemeColor] = value;
 		}
 	}
+	// ── Phase 1: resolve glyphs + layout from JSON, merging with defaults ─
+	const jsonGlyphs = themeJson.glyphs ?? {};
+	const glyphs: ResolvedGlyphs = {
+		hr: jsonGlyphs.hr ?? DEFAULT_GLYPHS.hr,
+		bullet1: jsonGlyphs.bullet1 ?? DEFAULT_GLYPHS.bullet1,
+		bullet2: jsonGlyphs.bullet2 ?? DEFAULT_GLYPHS.bullet2,
+		middleDot: jsonGlyphs.middleDot ?? DEFAULT_GLYPHS.middleDot,
+		ellipsis: jsonGlyphs.ellipsis ?? DEFAULT_GLYPHS.ellipsis,
+		submitHint: jsonGlyphs.submitHint ?? DEFAULT_GLYPHS.submitHint,
+		spinnerFrames: jsonGlyphs.spinnerFrames ? [...jsonGlyphs.spinnerFrames] : [...DEFAULT_GLYPHS.spinnerFrames],
+		spinnerIntervalMs: jsonGlyphs.spinnerIntervalMs ?? DEFAULT_GLYPHS.spinnerIntervalMs,
+		toolDots: jsonGlyphs.toolDots ?? DEFAULT_GLYPHS.toolDots,
+		toolBracketOpen: jsonGlyphs.toolBracketOpen ?? DEFAULT_GLYPHS.toolBracketOpen,
+		toolBracketClose: jsonGlyphs.toolBracketClose ?? DEFAULT_GLYPHS.toolBracketClose,
+		successPill: jsonGlyphs.successPill ?? DEFAULT_GLYPHS.successPill,
+		errorPill: jsonGlyphs.errorPill ?? DEFAULT_GLYPHS.errorPill,
+		workingLabel: jsonGlyphs.workingLabel ?? DEFAULT_GLYPHS.workingLabel,
+	};
+	const jsonLayout = themeJson.layout ?? {};
+	const layout: ResolvedLayout = {
+		messageStyle: jsonLayout.messageStyle ?? DEFAULT_LAYOUT.messageStyle,
+		toolBlockStyle: jsonLayout.toolBlockStyle ?? DEFAULT_LAYOUT.toolBlockStyle,
+		inputAreaStyle: jsonLayout.inputAreaStyle ?? DEFAULT_LAYOUT.inputAreaStyle,
+		roleLabelStyle: jsonLayout.roleLabelStyle ?? DEFAULT_LAYOUT.roleLabelStyle,
+		userRoleLabel: jsonLayout.userRoleLabel ?? DEFAULT_LAYOUT.userRoleLabel,
+		assistantRoleLabel: jsonLayout.assistantRoleLabel ?? DEFAULT_LAYOUT.assistantRoleLabel,
+		toolGutter: jsonLayout.toolGutter ?? DEFAULT_LAYOUT.toolGutter,
+		blankLineBetweenTurns: jsonLayout.blankLineBetweenTurns ?? DEFAULT_LAYOUT.blankLineBetweenTurns,
+		footerStyle: jsonLayout.footerStyle ?? DEFAULT_LAYOUT.footerStyle,
+		footerSeparator: jsonLayout.footerSeparator ?? DEFAULT_LAYOUT.footerSeparator,
+		asciiOnly: jsonLayout.asciiOnly ?? DEFAULT_LAYOUT.asciiOnly,
+	};
+	// ── End Phase 1 resolution ────────────────────────────────────────────
+
 	return new Theme(fgColors, bgColors, colorMode, {
 		name: themeJson.name,
 		sourcePath,
+		glyphs,
+		layout,
 	});
 }
 
@@ -830,7 +1099,13 @@ function startThemeWatcher(): void {
 	stopThemeWatcher();
 
 	// Only watch if it's a custom theme (not built-in)
-	if (!currentThemeName || currentThemeName === "dark" || currentThemeName === "light") {
+	if (
+		!currentThemeName ||
+		currentThemeName === "dark" ||
+		currentThemeName === "light" ||
+		currentThemeName === "editorial" ||
+		currentThemeName === "brutalist"
+	) {
 		return;
 	}
 
