@@ -179,7 +179,7 @@ export class BashExecutionComponent extends Container {
 					statusParts.push(`(${keyHint("app.tools.expand", "to collapse")})`);
 				} else {
 					statusParts.push(
-						`${theme.fg("muted", `... ${hiddenLineCount} more lines`)} (${keyHint("app.tools.expand", "to expand")})`,
+						`${theme.italic(theme.fg("dim", `... ${hiddenLineCount} more lines`))} (${keyHint("app.tools.expand", "to expand")})`,
 					);
 				}
 			}
