@@ -606,7 +606,21 @@ export class InteractiveMode {
 
 		// Add header with keybindings from config (unless silenced)
 		if (this.options.verbose || !this.settingsManager.getQuietStartup()) {
-			const logo = theme.bold(theme.fg("accent", APP_NAME)) + theme.fg("dim", ` v${this.version}`);
+			// Premium themes (e.g. aurora) ship a gradient wordmark banner. Render it
+			// when it fits the terminal; otherwise fall back to the plain bold logo.
+			// Width-guarded so narrow terminals never get a wrapped, broken wordmark.
+			const bannerLines = theme.bannerLines();
+			const termCols = process.stdout.columns ?? 80;
+			let logo: string;
+			if (bannerLines && bannerLines.length > 0 && theme.bannerWidth() <= termCols - 2) {
+				const tagline = theme.bannerTagline();
+				const taglineLine = tagline
+					? `${theme.fg("muted", tagline)}${theme.fg("dim", `  ·  v${this.version}`)}`
+					: theme.fg("dim", `v${this.version}`);
+				logo = `${bannerLines.join("\n")}\n${taglineLine}`;
+			} else {
+				logo = theme.bold(theme.fg("accent", APP_NAME)) + theme.fg("dim", ` v${this.version}`);
+			}
 
 			// Build startup instructions using keybinding hint helpers
 			const hint = (keybinding: AppKeybinding, description: string) => keyHint(keybinding, description);
@@ -1696,15 +1710,24 @@ export class InteractiveMode {
 	}
 
 	private createWorkingLoader(): Loader {
+		// Premium themes ship a signature gradient → build pre-coloured spinner frames
+		// whose hue breathes through the gradient each tick (an animated neon shimmer).
+		// Only when no extension supplied a custom indicator.
+		const gradientFrames = this.workingIndicatorOptions ? undefined : theme.gradientSpinnerFrames();
 		const indicator = this.workingIndicatorOptions ?? {
-			frames: theme.spinnerFrames(),
+			frames: gradientFrames ?? theme.spinnerFrames(),
 			intervalMs: theme.spinnerIntervalMs(),
 		};
 		// For rule/bracket styles, match spinner color to muted text (not accent)
 		const spinnerColor = theme.messageStyle() === "fill" ? ("accent" as const) : ("muted" as const);
+		// Pre-coloured gradient frames already carry their own SGR codes → pass them
+		// through unchanged; otherwise apply the flat per-style colour.
+		const colorize = gradientFrames
+			? (spinner: string) => spinner
+			: (spinner: string) => theme.fg(spinnerColor, spinner);
 		return new Loader(
 			this.ui,
-			(spinner) => theme.fg(spinnerColor, spinner),
+			colorize,
 			(text) => theme.fg("muted", text),
 			this.getWorkingLoaderMessage(),
 			indicator,

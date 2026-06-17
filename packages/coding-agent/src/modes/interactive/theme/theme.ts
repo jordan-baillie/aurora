@@ -65,6 +65,19 @@ const GlyphsSchema = Type.Optional(
 	}),
 );
 
+// ── Phase 3: signature gradient + startup wordmark banner ────────────────
+// Both are OPTIONAL: themes that omit them render exactly as before (the plain
+// bold-accent logo, a flat-coloured spinner). A theme opts into the premium look
+// by declaring a `gradient` (drives the banner + the animated spinner) and a
+// `banner` (multi-line ASCII wordmark painted with that gradient).
+const GradientSchema = Type.Optional(Type.Array(ColorValueSchema));
+const BannerSchema = Type.Optional(
+	Type.Object({
+		lines: Type.Array(Type.String()),
+		tagline: Type.Optional(Type.String()),
+	}),
+);
+
 const LayoutSchema = Type.Optional(
 	Type.Object({
 		messageStyle: Type.Optional(MessageStyleSchema),
@@ -155,6 +168,8 @@ const ThemeJsonSchema = Type.Object({
 	),
 	glyphs: GlyphsSchema,
 	layout: LayoutSchema,
+	gradient: GradientSchema,
+	banner: BannerSchema,
 });
 
 type ThemeJson = Static<typeof ThemeJsonSchema>;
@@ -234,6 +249,12 @@ type ResolvedGlyphs = {
 };
 
 type ResolvedLayout = LayoutValueByName;
+
+/** Resolved startup wordmark banner (ASCII-art lines + optional tagline). */
+export type ResolvedBanner = {
+	lines: string[];
+	tagline?: string;
+};
 
 /** Default glyph values — matches the existing dark/light visual identity. */
 export const DEFAULT_GLYPHS: ResolvedGlyphs = {
@@ -504,6 +525,10 @@ export class Theme {
 	private mode: ColorMode;
 	private resolvedGlyphs: ResolvedGlyphs;
 	private resolvedLayout: ResolvedLayout;
+	/** Signature gradient hex stops (optional). Drives the banner + animated spinner. */
+	private resolvedGradient: string[] | undefined;
+	/** Startup wordmark banner (optional). */
+	private resolvedBanner: ResolvedBanner | undefined;
 
 	constructor(
 		fgColors: Record<ThemeColor, string | number>,
@@ -515,6 +540,8 @@ export class Theme {
 			sourceInfo?: SourceInfo;
 			glyphs?: ResolvedGlyphs;
 			layout?: ResolvedLayout;
+			gradient?: string[];
+			banner?: ResolvedBanner;
 		} = {},
 	) {
 		this.name = options.name;
@@ -534,6 +561,10 @@ export class Theme {
 			spinnerFrames: [...DEFAULT_GLYPHS.spinnerFrames],
 		};
 		this.resolvedLayout = options.layout ?? { ...DEFAULT_LAYOUT };
+		this.resolvedGradient = options.gradient && options.gradient.length > 0 ? [...options.gradient] : undefined;
+		this.resolvedBanner = options.banner
+			? { lines: [...options.banner.lines], tagline: options.banner.tagline }
+			: undefined;
 	}
 
 	fg(color: ThemeColor, text: string): string {
@@ -673,6 +704,120 @@ export class Theme {
 	}
 
 	// ── End Phase 1 accessors ──────────────────────────────────────────────
+
+	// ── Phase 3: signature gradient + wordmark banner ──────────────────────
+
+	/** The theme's signature gradient hex stops, or undefined if none configured. */
+	signatureGradient(): string[] | undefined {
+		return this.resolvedGradient ? [...this.resolvedGradient] : undefined;
+	}
+
+	/**
+	 * Interpolate a list of hex stops at position t∈[0,1] → "#rrggbb".
+	 * `cyclic` wraps the last stop back to the first for a seamless colour loop
+	 * (used by the breathing spinner). Pure + deterministic.
+	 */
+	gradientAt(t: number, stops?: string[], cyclic = false): string {
+		const base = stops ?? this.resolvedGradient ?? [];
+		if (base.length === 0) return "#ffffff";
+		if (base.length === 1) return base[0];
+		const ramp = cyclic ? [...base, base[0]] : base;
+		const clamped = Math.min(1, Math.max(0, t));
+		const seg = clamped * (ramp.length - 1);
+		const i = Math.min(ramp.length - 2, Math.floor(seg));
+		const f = seg - i;
+		const a = hexToRgb(ramp[i]);
+		const b = hexToRgb(ramp[i + 1]);
+		const mix = (x: number, y: number) => Math.round(x + (y - x) * f);
+		const hex = (n: number) => n.toString(16).padStart(2, "0");
+		return `#${hex(mix(a.r, b.r))}${hex(mix(a.g, b.g))}${hex(mix(a.b, b.b))}`;
+	}
+
+	/** Wrap `text` in a single hex colour (mode-aware: truecolor or nearest-256). */
+	colorizeHex(hex: string, text: string): string {
+		return `${fgAnsi(hex, this.mode)}${text}\x1b[39m`;
+	}
+
+	/**
+	 * Colour each visible character of `text` along a gradient (defaults to the
+	 * theme's signature gradient). Spaces are left uncoloured. Returns the text
+	 * unchanged when no gradient is configured.
+	 */
+	gradientText(text: string, stops?: string[]): string {
+		const ramp = stops ?? this.resolvedGradient;
+		if (!ramp || ramp.length === 0) return text;
+		const chars = [...text];
+		const n = chars.length;
+		let out = "";
+		for (let i = 0; i < n; i++) {
+			const ch = chars[i];
+			if (ch === " ") {
+				out += " ";
+				continue;
+			}
+			const t = n <= 1 ? 0 : i / (n - 1);
+			out += this.colorizeHex(this.gradientAt(t, ramp), ch);
+		}
+		return out;
+	}
+
+	/**
+	 * Render the wordmark banner with a column-aligned horizontal gradient: the
+	 * colour of a character depends on its column across the FULL banner width, so
+	 * the gradient stays vertically aligned between rows of differing length.
+	 * Returns undefined when the theme declares no banner.
+	 */
+	bannerLines(): string[] | undefined {
+		const banner = this.resolvedBanner;
+		if (!banner) return undefined;
+		const ramp = this.resolvedGradient;
+		const width = Math.max(1, ...banner.lines.map((l) => [...l].length));
+		return banner.lines.map((line) => {
+			const chars = [...line];
+			let out = "";
+			for (let col = 0; col < chars.length; col++) {
+				const ch = chars[col];
+				if (ch === " ") {
+					out += " ";
+					continue;
+				}
+				if (!ramp || ramp.length === 0) {
+					out += ch;
+					continue;
+				}
+				const t = width <= 1 ? 0 : col / (width - 1);
+				out += this.colorizeHex(this.gradientAt(t, ramp), ch);
+			}
+			return out;
+		});
+	}
+
+	/** The widest banner row in cells (0 when no banner). */
+	bannerWidth(): number {
+		if (!this.resolvedBanner) return 0;
+		return Math.max(0, ...this.resolvedBanner.lines.map((l) => [...l].length));
+	}
+
+	/** Optional tagline rendered under the banner. */
+	bannerTagline(): string | undefined {
+		return this.resolvedBanner?.tagline;
+	}
+
+	/**
+	 * Build animated spinner frames whose colour breathes through the signature
+	 * gradient (one full cyclic sweep across the frame set). Returns undefined
+	 * when no gradient is configured, so callers fall back to a flat colour.
+	 */
+	gradientSpinnerFrames(): string[] | undefined {
+		const ramp = this.resolvedGradient;
+		if (!ramp || ramp.length === 0) return undefined;
+		const frames = this.resolvedGlyphs.spinnerFrames;
+		const n = frames.length;
+		return frames.map((frame, i) => {
+			const t = n <= 1 ? 0 : i / n; // i/n (not n-1) → seamless wrap with cyclic
+			return this.colorizeHex(this.gradientAt(t, ramp, true), frame);
+		});
+	}
 }
 
 // ============================================================================
@@ -893,11 +1038,27 @@ function createTheme(themeJson: ThemeJson, mode?: ColorMode, sourcePath?: string
 	};
 	// ── End Phase 1 resolution ────────────────────────────────────────────
 
+	// ── Phase 3: resolve signature gradient + banner ──────────────────────
+	// Gradient stops may be var refs ("accent") or hex; resolve to hex and drop
+	// any non-hex (256-index) stops since the gradient needs RGB to interpolate.
+	const vars = themeJson.vars ?? {};
+	const gradient: string[] | undefined = themeJson.gradient
+		? themeJson.gradient
+				.map((stop) => resolveVarRefs(stop, vars))
+				.filter((c): c is string => typeof c === "string" && c.startsWith("#"))
+		: undefined;
+	const banner: ResolvedBanner | undefined = themeJson.banner
+		? { lines: [...themeJson.banner.lines], tagline: themeJson.banner.tagline }
+		: undefined;
+	// ── End Phase 3 resolution ────────────────────────────────────────────
+
 	return new Theme(fgColors, bgColors, colorMode, {
 		name: themeJson.name,
 		sourcePath,
 		glyphs,
 		layout,
+		gradient: gradient && gradient.length > 0 ? gradient : undefined,
+		banner,
 	});
 }
 
