@@ -1,6 +1,7 @@
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { Container, Markdown, type MarkdownTheme, Spacer, Text } from "@earendil-works/pi-tui";
 import { getMarkdownTheme, theme } from "../theme/theme.ts";
+import { MessageBoxFrame } from "./box-frame.ts";
 import { RoleHeaderComponent } from "./role-divider.ts";
 
 const OSC133_ZONE_START = "\x1b]133;A\x07";
@@ -14,6 +15,7 @@ const OSC133_ZONE_FINAL = "\x1b]133;C\x07";
  *  - "fill"    (dark/light): current behavior — paddingX=1 Markdown, no header.
  *  - "rule"    (editorial):  role-label + hr rule header, then the body.
  *  - "bracket" (brutalist):  --[ pi ]-- header, then the body.
+ *  - "box"     (aurora):     full rounded box around the body, accent role label.
  */
 export class AssistantMessageComponent extends Container {
 	private contentContainer: Container;
@@ -86,15 +88,25 @@ export class AssistantMessageComponent extends Container {
 			(c) => (c.type === "text" && c.text.trim()) || (c.type === "thinking" && c.thinking.trim()),
 		);
 
+		// In "box" mode the whole body is collected into a sub-container, then sealed inside a
+		// MessageBoxFrame; the role label lives in the box's top border (no separate header line).
+		// `target` is where body children go: the box body for "box", else contentContainer directly.
+		const style = theme.messageStyle();
+		const useBox = style === "box" && hasVisibleContent;
+		const target: Container = useBox ? new Container() : this.contentContainer;
+		// Box bodies sit flush inside the "│ " edge (matches tool cards); other styles keep paddingX=1.
+		const padX = useBox ? 0 : 1;
+
 		if (hasVisibleContent) {
-			const style = theme.messageStyle();
-			if (style !== "fill") {
+			if (style !== "fill" && style !== "box") {
 				// ── Rule / Bracket: editorial + brutalist ────────────────────
 				// Role-label header line (CLAUDE ───── or --[ pi ]──)
 				this.contentContainer.addChild(new RoleHeaderComponent("assistant"));
 			}
-			// Leading blank line — acts as spacing above body for all styles
-			this.contentContainer.addChild(new Spacer(1));
+			if (!useBox) {
+				// Leading blank line — spacing above body for fill / rule / bracket.
+				this.contentContainer.addChild(new Spacer(1));
+			}
 		}
 
 		// Render content in order
@@ -103,7 +115,7 @@ export class AssistantMessageComponent extends Container {
 			if (content.type === "text" && content.text.trim()) {
 				// Assistant text messages with no background - trim the text
 				// Set paddingY=0 to avoid extra spacing before tool executions
-				this.contentContainer.addChild(new Markdown(content.text.trim(), 1, 0, this.markdownTheme));
+				target.addChild(new Markdown(content.text.trim(), padX, 0, this.markdownTheme));
 			} else if (content.type === "thinking" && content.thinking.trim()) {
 				// Add spacing only when another visible assistant content block follows.
 				// This avoids a superfluous blank line before separately-rendered tool execution blocks.
@@ -113,22 +125,20 @@ export class AssistantMessageComponent extends Container {
 
 				if (this.hideThinkingBlock) {
 					// Show static thinking label when hidden
-					this.contentContainer.addChild(
-						new Text(theme.italic(theme.fg("thinkingText", this.hiddenThinkingLabel)), 1, 0),
-					);
+					target.addChild(new Text(theme.italic(theme.fg("thinkingText", this.hiddenThinkingLabel)), padX, 0));
 					if (hasVisibleContentAfter) {
-						this.contentContainer.addChild(new Spacer(1));
+						target.addChild(new Spacer(1));
 					}
 				} else {
 					// Thinking traces in thinkingText color, italic
-					this.contentContainer.addChild(
-						new Markdown(content.thinking.trim(), 1, 0, this.markdownTheme, {
+					target.addChild(
+						new Markdown(content.thinking.trim(), padX, 0, this.markdownTheme, {
 							color: (text: string) => theme.fg("thinkingText", text),
 							italic: true,
 						}),
 					);
 					if (hasVisibleContentAfter) {
-						this.contentContainer.addChild(new Spacer(1));
+						target.addChild(new Spacer(1));
 					}
 				}
 			}
@@ -144,17 +154,25 @@ export class AssistantMessageComponent extends Container {
 					message.errorMessage && message.errorMessage !== "Request was aborted"
 						? message.errorMessage
 						: "Operation aborted";
-				if (hasVisibleContent) {
-					this.contentContainer.addChild(new Spacer(1));
-				} else {
-					this.contentContainer.addChild(new Spacer(1));
-				}
-				this.contentContainer.addChild(new Text(theme.fg("error", abortMessage), 1, 0));
+				target.addChild(new Spacer(1));
+				target.addChild(new Text(theme.fg("error", abortMessage), padX, 0));
 			} else if (message.stopReason === "error") {
 				const errorMsg = message.errorMessage || "Unknown error";
-				this.contentContainer.addChild(new Spacer(1));
-				this.contentContainer.addChild(new Text(theme.fg("error", `Error: ${errorMsg}`), 1, 0));
+				target.addChild(new Spacer(1));
+				target.addChild(new Text(theme.fg("error", `Error: ${errorMsg}`), padX, 0));
 			}
+		}
+
+		// Seal the box around the collected body (aurora). The role label lives in the top border.
+		if (useBox) {
+			this.contentContainer.addChild(
+				new MessageBoxFrame(target, {
+					label: theme.roleLabel("assistant").toUpperCase(),
+					borderColor: "borderAccent",
+					labelColor: "toolTitle",
+				}),
+			);
+			this.contentContainer.addChild(new Spacer(1));
 		}
 	}
 }

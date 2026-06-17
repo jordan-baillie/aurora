@@ -32,7 +32,12 @@ const NumberSchema = Type.Number();
 
 const RoleStyleSchema = Type.Union([Type.Literal("none"), Type.Literal("smallcaps"), Type.Literal("bracket")]);
 
-const MessageStyleSchema = Type.Union([Type.Literal("fill"), Type.Literal("rule"), Type.Literal("bracket")]);
+const MessageStyleSchema = Type.Union([
+	Type.Literal("fill"),
+	Type.Literal("rule"),
+	Type.Literal("bracket"),
+	Type.Literal("box"),
+]);
 
 const ToolBlockStyleSchema = Type.Union([Type.Literal("fill"), Type.Literal("indent"), Type.Literal("ascii-box")]);
 
@@ -177,7 +182,7 @@ type ThemeJson = Static<typeof ThemeJsonSchema>;
 // ── Phase 1: exported types + defaults ───────────────────────────────────
 
 /** Style variants for message bubble rendering. */
-export type MessageStyle = "fill" | "rule" | "bracket";
+export type MessageStyle = "fill" | "rule" | "bracket" | "box";
 /** Style variants for tool-call block rendering. */
 export type ToolBlockStyle = "fill" | "indent" | "ascii-box";
 /** Style variants for the input-area chrome. */

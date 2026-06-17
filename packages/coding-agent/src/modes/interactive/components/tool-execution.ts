@@ -14,6 +14,7 @@ import { createAllToolDefinitions, type ToolName } from "../../../core/tools/ind
 import { getTextOutput as getRenderedTextOutput } from "../../../core/tools/render-utils.ts";
 import { convertToPng } from "../../../utils/image-convert.ts";
 import { type ToolBlockStyle, theme } from "../theme/theme.ts";
+import { boxBodyWidth, wrapBoxBody } from "./box-frame.ts";
 
 // ============================================================================
 // IndentedToolFrame — gutter + running-header + body + footer pill
@@ -150,7 +151,7 @@ class AsciiBoxFrame implements Component {
 			edge(` ${bc}${h.repeat(topFill)}${tr}`);
 
 		// ── Body ───────────────────────────────────────────────────────────
-		const bodyWidth = Math.max(1, width - 4); // "v " + " v"
+		const bodyWidth = boxBodyWidth(width); // "v " + " v"
 		const bodyLines = this.innerContainer.render(bodyWidth);
 
 		// ── Bottom border ──────────────────────────────────────────────────
@@ -178,15 +179,8 @@ class AsciiBoxFrame implements Component {
 				edge(`${bl}${h}${h}${bo} `) + theme.fg("muted", runText) + edge(` ${bc}${h.repeat(botFill)}${br}`);
 		}
 
-		const lines: string[] = [topBorder];
-		for (const line of bodyLines) {
-			// Strip trailing spaces then pad to bodyWidth using visibleWidth (handles all ANSI codes)
-			const stripped = line.replace(/\s+$/, "");
-			const padCount = Math.max(0, bodyWidth - visibleWidth(stripped));
-			lines.push(`${edge(`${v} `)}${stripped}${" ".repeat(padCount)}${edge(` ${v}`)}`);
-		}
-		lines.push(bottomBorder);
-		return lines;
+		// Body padding (the off-by-one-prone math) is single-sourced in wrapBoxBody — see box-frame.ts.
+		return [topBorder, ...wrapBoxBody(bodyLines, bodyWidth, v, edge), bottomBorder];
 	}
 }
 
