@@ -634,6 +634,18 @@ export class SettingsManager {
 		return this.settings.theme;
 	}
 
+	/**
+	 * The theme that should actually be active. The PI_THEME override (established
+	 * once at startup from the `--theme <name>` flag or the PI_THEME env var, see
+	 * main.ts) takes precedence over settings.json. ALL theme (re-)initialization
+	 * sites must use this, never getTheme() directly: using getTheme() drops the
+	 * override on /reload, resume, and config-selector re-inits — the launcher
+	 * picks a theme by name but a re-init silently reverts to settings.json.
+	 */
+	getEffectiveTheme(): string | undefined {
+		return process.env.PI_THEME ?? this.getTheme();
+	}
+
 	setTheme(theme: string): void {
 		this.globalSettings.theme = theme;
 		this.markModified("theme");

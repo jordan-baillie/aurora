@@ -418,6 +418,13 @@ export interface ToolRenderContext<TState = any, TArgs = any> {
 	showImages: boolean;
 	/** Whether the current result is an error. */
 	isError: boolean;
+	/**
+	 * True when the surrounding tool frame already renders elapsed time (the
+	 * `indent` / `ascii-box` styles show it in their footer/border). Tools should
+	 * then OMIT their own duration line to avoid showing the time twice. Undefined/
+	 * false in fill mode, where the body's duration line is the only timing shown.
+	 */
+	frameShowsTiming?: boolean;
 }
 
 /**

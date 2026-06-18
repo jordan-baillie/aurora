@@ -160,6 +160,39 @@ describe("ToolExecutionComponent parity", () => {
 		expect(rendered).not.toContain("[Showing lines 2001-4000 of 4000. Full output:");
 	});
 
+	test("bash body omits its own duration line when the frame already shows timing (no duplicate)", () => {
+		const tool = createBashToolDefinition(process.cwd(), { operations: { exec: async () => ({ exitCode: 0 }) } });
+		const renderBash = (frameShowsTiming: boolean): string => {
+			const ctx = {
+				args: { command: "echo hi" },
+				toolCallId: "t-timing",
+				invalidate: () => {},
+				lastComponent: undefined,
+				state: { startedAt: Date.now() - 1500 } as Record<string, unknown>,
+				cwd: process.cwd(),
+				executionStarted: true,
+				argsComplete: true,
+				isPartial: false,
+				expanded: false,
+				showImages: false,
+				isError: false,
+				frameShowsTiming,
+			};
+			const result = { content: [{ type: "text", text: "hi" }], details: undefined, isError: false };
+			const component = tool.renderResult!(
+				result as never,
+				{ isPartial: false } as never,
+				undefined as never,
+				ctx as never,
+			);
+			return stripAnsi(component.render(80).join("\n"));
+		};
+		// Fill mode (no frame timing): the body is the ONLY place time shows → keep "Took".
+		expect(renderBash(false)).toContain("Took");
+		// Framed mode (indent/ascii-box already show elapsed in footer/border): no duplicate.
+		expect(renderBash(true)).not.toContain("Took");
+	});
+
 	test("does not duplicate built-in headers when passed the active built-in definition", () => {
 		const component = new ToolExecutionComponent(
 			"read",

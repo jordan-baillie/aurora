@@ -198,6 +198,33 @@ describe("SettingsManager", () => {
 		});
 	});
 
+	describe("getEffectiveTheme (PI_THEME override precedence)", () => {
+		// Guards the whole class of "theme reverts on /reload, resume, or config-selector" bugs:
+		// a launcher activates a theme by name via the --theme flag / PI_THEME env, and every theme
+		// (re-)init site MUST resolve through getEffectiveTheme() so it keeps the override instead of
+		// silently falling back to settings.json. See main.ts (establishes PI_THEME) + the init sites.
+		const prevPiTheme = process.env.PI_THEME;
+		afterEach(() => {
+			if (prevPiTheme === undefined) delete process.env.PI_THEME;
+			else process.env.PI_THEME = prevPiTheme;
+		});
+
+		it("prefers PI_THEME over settings.json", () => {
+			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ theme: "harness" }));
+			const manager = SettingsManager.create(projectDir, agentDir);
+			process.env.PI_THEME = "aurora";
+			expect(manager.getTheme()).toBe("harness"); // raw config unchanged
+			expect(manager.getEffectiveTheme()).toBe("aurora"); // override wins
+		});
+
+		it("falls back to settings.json when PI_THEME is unset", () => {
+			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ theme: "harness" }));
+			const manager = SettingsManager.create(projectDir, agentDir);
+			delete process.env.PI_THEME;
+			expect(manager.getEffectiveTheme()).toBe("harness");
+		});
+	});
+
 	describe("error tracking", () => {
 		it("should collect and clear load errors via drainErrors", () => {
 			const globalSettingsPath = join(agentDir, "settings.json");

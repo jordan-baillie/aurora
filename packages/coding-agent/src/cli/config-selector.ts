@@ -18,7 +18,7 @@ export interface ConfigSelectorOptions {
 /** Show TUI config selector and return when closed */
 export async function selectConfig(options: ConfigSelectorOptions): Promise<void> {
 	// Initialize theme before showing TUI (honor a PI_THEME / --theme override over the settings default)
-	initTheme(process.env.PI_THEME ?? options.settingsManager.getTheme(), true);
+	initTheme(options.settingsManager.getEffectiveTheme(), true);
 
 	return new Promise((resolve) => {
 		const ui = new TUI(new ProcessTerminal());

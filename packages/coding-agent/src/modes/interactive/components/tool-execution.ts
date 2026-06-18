@@ -364,6 +364,10 @@ export class ToolExecutionComponent extends Container {
 			expanded: this.expanded,
 			showImages: this.showImages,
 			isError: this.result?.isError ?? false,
+			// Framed styles render elapsed in their footer/border → tools must not also
+			// print their own duration line (single owner of timing per render mode).
+			frameShowsTiming:
+				this.toolBlockStyleAtConstruct === "indent" || this.toolBlockStyleAtConstruct === "ascii-box",
 		};
 	}
 
