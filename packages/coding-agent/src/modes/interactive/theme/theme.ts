@@ -95,6 +95,8 @@ const LayoutSchema = Type.Optional(
 		blankLineBetweenTurns: Type.Optional(NumberSchema),
 		footerStyle: Type.Optional(Type.Union([Type.Literal("two-line"), Type.Literal("single-line")])),
 		footerSeparator: Type.Optional(GlyphValueSchema),
+		spinnerStyle: Type.Optional(Type.Union([Type.Literal("dots"), Type.Literal("wave")])),
+		bannerAnimation: Type.Optional(Type.Union([Type.Literal("none"), Type.Literal("comet")])),
 		asciiOnly: Type.Optional(Type.Boolean()),
 	}),
 );
@@ -191,6 +193,9 @@ export type InputAreaStyle = "border-fill" | "rules-only";
 export type RoleStyle = "none" | "smallcaps" | "bracket";
 /** Style variants for the footer row. */
 export type FooterStyle = "two-line" | "single-line";
+/** Working-loader spinner: `dots` = single breathing glyph; `wave` = aurora ribbon. */
+export type SpinnerStyle = "dots" | "wave";
+export type BannerAnimation = "none" | "comet";
 
 /** Keys for the string-valued glyph table (excludes spinnerFrames / spinnerIntervalMs). */
 export type GlyphName =
@@ -225,6 +230,8 @@ export type LayoutValueByName = {
 	blankLineBetweenTurns: number;
 	footerStyle: FooterStyle;
 	footerSeparator: string;
+	spinnerStyle: SpinnerStyle;
+	bannerAnimation: BannerAnimation;
 	asciiOnly: boolean;
 };
 
@@ -298,6 +305,8 @@ export const DEFAULT_LAYOUT: ResolvedLayout = {
 	blankLineBetweenTurns: 1,
 	footerStyle: "two-line",
 	footerSeparator: "   ",
+	spinnerStyle: "dots",
+	bannerAnimation: "none",
 	asciiOnly: false,
 };
 
@@ -823,6 +832,208 @@ export class Theme {
 			return this.colorizeHex(this.gradientAt(t, ramp, true), frame);
 		});
 	}
+
+	/**
+	 * Aurora "wave-ribbon" working spinner: a single smooth, symmetric crest of light
+	 * (a raised-cosine swell of block glyphs ▁▂▃▄▅▆▇█) that glides across the ribbon
+	 * and wraps seamlessly, while the gradient colours travel through it with a per-frame
+	 * phase offset — so both the swell AND the colours flow like the aurora borealis. The
+	 * crest is unimodal every frame (one clean wave, never a busy multi-bump equalizer) and
+	 * every frame has identical visible width (correct-by-construction — no hand-authored
+	 * frames that could drift off-width and jitter the loader). Returns undefined
+	 * unless the theme opts in (`layout.spinnerStyle: "wave"`) AND a gradient exists,
+	 * so non-premium themes fall through to the breathing/flat spinner. Pure +
+	 * deterministic (frames built once at theme load).
+	 */
+	auroraSpinnerFrames(): string[] | undefined {
+		if (this.resolvedLayout.spinnerStyle !== "wave") return undefined;
+		const ramp = this.resolvedGradient;
+		if (!ramp || ramp.length === 0) return undefined;
+		const levels = ["▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"]; // 8 rising 1-cell blocks (crest tops out at a full block)
+		const width = 7; // ribbon cells
+		const frameCount = 24; // 24 frames → a long, fluid seamless loop
+		const maxLevel = levels.length - 1;
+		const frames: string[] = [];
+		for (let f = 0; f < frameCount; f++) {
+			const phase = f / frameCount; // 0..1 → the crest travels one full ring, seamless wrap
+			let frame = "";
+			for (let x = 0; x < width; x++) {
+				// height: ONE smooth, symmetric crest of light sweeping across the ribbon. A raised
+				// cosine on a ring (peak at `phase`, `dist` = wrap-around distance from it in [0, 0.5])
+				// → a single clean aurora swell with an even falloff on both sides — never a busy,
+				// multi-bump equalizer. Correct-by-construction: the crest is unimodal every frame.
+				const dist = Math.abs(((((x / width - phase + 0.5) % 1) + 1) % 1) - 0.5);
+				const norm = Math.cos(dist * Math.PI) ** 2; // 1 at the crest → 0 half a ring away
+				const level = Math.min(maxLevel, Math.round(norm * maxLevel));
+				// colour also travels (offset by phase) → the swell shimmers through the gradient
+				const t = (x / (width - 1) + phase) % 1;
+				frame += this.colorizeHex(this.gradientAt(t, ramp, true), levels[level]);
+			}
+			frames.push(frame);
+		}
+		return frames;
+	}
+
+	/** Linear-interpolate two hex colours → "#rrggbb" (t clamped to [0,1]). Pure. */
+	private mixHex(a: string, b: string, t: number): string {
+		const x = hexToRgb(a);
+		const y = hexToRgb(b);
+		const f = Math.min(1, Math.max(0, t));
+		const m = (p: number, q: number) => Math.round(p + (q - p) * f);
+		const h = (n: number) => n.toString(16).padStart(2, "0");
+		return `#${h(m(x.r, y.r))}${h(m(x.g, y.g))}${h(m(x.b, y.b))}`;
+	}
+
+	/**
+	 * Aurora "comet" banner ("Comet Glint"): a CONTINUOUS, seamless-looping animation of the neon-tube
+	 * wordmark where (a) the signature gradient drifts boldly through the tubes (a whole number of
+	 * cyclic passes per loop — clearly visible hue motion) with soft light bands gliding around each
+	 * letter, and (b) a bright white glint sweeps left→right through the word every loop, shedding a
+	 * fading comet trail of particles. The frames render a small character grid (the wordmark plus one
+	 * spray row above/below). It loops seamlessly: the gradient + bands complete whole cycles, and the
+	 * comet is fully off-screen at both ends of the loop, so frame[N−1] → frame[0] has no seam.
+	 * Pure + deterministic (built once at theme load; a fixed-seed PRNG sets the trail's scatter so it
+	 * is reproducible). Returns undefined unless the theme opts in (`layout.bannerAnimation: "comet"`)
+	 * AND a gradient + banner exist AND the wordmark is separable into letters by blank columns.
+	 */
+	auroraBannerCometFrames(): string[] | undefined {
+		if (this.resolvedLayout.bannerAnimation !== "comet") return undefined;
+		const banner = this.resolvedBanner;
+		const ramp = this.resolvedGradient;
+		if (!banner || !ramp || ramp.length === 0) return undefined;
+		const rows = banner.lines.map((l) => [...l]);
+		const H = rows.length;
+		if (H === 0) return undefined;
+		const W = Math.max(1, ...rows.map((r) => r.length));
+		if (W <= 1) return undefined;
+
+		// Segment the wordmark into letters by fully-blank columns (a separator column is space in
+		// every row). Each filled cell's angular position around its letter centroid drives the pulse.
+		const colBlank = (c: number) => rows.every((r) => (r[c] ?? " ") === " ");
+		const letterOf = new Array<number>(W).fill(-1);
+		let li = -1;
+		let prevBlank = true;
+		for (let c = 0; c < W; c++) {
+			const blank = colBlank(c);
+			if (!blank && prevBlank) li++;
+			if (!blank) letterOf[c] = li;
+			prevBlank = blank;
+		}
+		const letterCount = li + 1;
+		if (letterCount < 1) return undefined;
+
+		const centroid = Array.from({ length: letterCount }, () => ({ r: 0, c: 0, n: 0 }));
+		const filled: { r: number; c: number; ch: string }[] = [];
+		for (let r = 0; r < H; r++) {
+			for (let c = 0; c < rows[r].length; c++) {
+				const ch = rows[r][c];
+				if (ch === " ") continue;
+				filled.push({ r, c, ch });
+				const l = letterOf[c];
+				if (l < 0) continue;
+				centroid[l].r += r;
+				centroid[l].c += c;
+				centroid[l].n++;
+			}
+		}
+		const angleParam = (r: number, c: number): number => {
+			const l = letterOf[c];
+			if (l < 0 || centroid[l].n === 0) return 0;
+			const cy = centroid[l].r / centroid[l].n;
+			const cx = centroid[l].c / centroid[l].n;
+			const ang = Math.atan2(r - cy, c - cx) / (2 * Math.PI);
+			return ((ang % 1) + 1) % 1;
+		};
+
+		// ── character grid: wordmark band + one spray row above/below for the comet shower ──
+		const PAD = 1;
+		const GR = H + 2 * PAD; // grid rows
+		const GC = W; // grid cols
+		const mid = PAD + (H - 1) / 2; // comet flies along the vertical middle
+		// fixed-seed PRNG → the trail's vertical scatter is a stable shape that translates with the comet
+		let seed = 0x9e3779b9 >>> 0;
+		const rng = () => {
+			seed = (seed + 0x6d2b79f5) | 0;
+			let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+			t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+			return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+		};
+		const TRAIL = 24; // particles in the comet tail
+		const TRAILLEN = 14; // tail length in columns
+		const voff = Array.from({ length: TRAIL }, () => (rng() - 0.5) * (GR - 1)); // stable vertical scatter
+
+		const frameCount = 56; // ~4.2s loop at 75ms/frame
+		const driftCycles = 2; // BOLD: gradient does 2 full cyclic passes per loop (very visible hue motion)
+		const laps = 1; // soft bands circle each letter once per loop
+		const sigma = 0.16;
+		const bandAmp = 0.22; // gentle tube shimmer (the comet is the star highlight)
+		const breatheAmp = 0.1;
+		const wrap = (x: number) => ((x % 1) + 1) % 1;
+		const frames: string[] = [];
+		type Cell = { ch: string; col: string; tube: boolean; a: number };
+		for (let f = 0; f < frameCount; f++) {
+			const phase = f / frameCount; // 0..1, wraps seamlessly
+			const breathe = breatheAmp * (0.5 + 0.5 * Math.sin(phase * 2 * Math.PI));
+			const grid: (Cell | null)[] = new Array(GR * GC).fill(null);
+			// (1) neon tubes — bold drifting gradient + soft outline bands
+			for (const { r, c, ch } of filled) {
+				const base = this.gradientAt(wrap((W <= 1 ? 0 : c / (W - 1)) + phase * driftCycles), ramp, true);
+				let b = 0;
+				const pp = angleParam(r, c);
+				for (const off of [0, 0.5]) {
+					let d = Math.abs(wrap(pp - (phase * laps + off)));
+					d = Math.min(d, 1 - d);
+					b = Math.max(b, Math.exp(-(d * d) / (2 * sigma * sigma)));
+				}
+				grid[(PAD + r) * GC + c] = {
+					ch,
+					col: this.mixHex(base, "#ffffff", Math.min(0.9, bandAmp * b + breathe)),
+					tube: true,
+					a: 1,
+				};
+			}
+			// (2) comet — head sweeps L→R, fully off-screen at both ends → seamless loop
+			const headCol = -TRAILLEN + phase * (W + 3 * TRAILLEN);
+			const plot = (grf: number, gcf: number, alpha: number, rgbHex: string, glyphs: string[]) => {
+				if (alpha <= 0.05) return;
+				const r = Math.round(grf);
+				const c = Math.round(gcf);
+				if (r < 0 || r >= GR || c < 0 || c >= GC) return;
+				const i = r * GC + c;
+				const cell = grid[i];
+				if (cell?.tube) {
+					cell.col = this.mixHex(cell.col, "#ffffff", Math.min(0.75, alpha * 0.75)); // comet glints the tube
+					return;
+				}
+				const g = alpha < 0.34 ? glyphs[0] : alpha < 0.68 ? glyphs[1] : glyphs[2];
+				const shown = this.mixHex("#0a0b14", rgbHex, Math.min(1, 0.3 + alpha * 0.85));
+				if (!cell || alpha > cell.a) grid[i] = { ch: g, col: shown, tube: false, a: alpha };
+			};
+			for (let j = TRAIL - 1; j >= 0; j--) {
+				const col = headCol - j * (TRAILLEN / TRAIL);
+				const a = (1 - j / TRAIL) * 0.85;
+				plot(mid + voff[j], col, a, this.gradientAt(wrap(col / W + phase), ramp, true), ["·", "•", "●"]);
+			}
+			plot(mid, headCol, 1, "#ffffff", ["●", "●", "●"]); // bright comet head
+			// (3) emit — every row padded to GC cells (constant width → no jitter)
+			const out: string[] = [];
+			for (let r = 0; r < GR; r++) {
+				let line = "";
+				for (let c = 0; c < GC; c++) {
+					const cell = grid[r * GC + c];
+					line += cell ? this.colorizeHex(cell.col, cell.ch) : " ";
+				}
+				out.push(line);
+			}
+			frames.push(out.join("\n"));
+		}
+		return frames;
+	}
+
+	/** Frame interval (ms) for the continuous aurora comet banner. */
+	bannerCometIntervalMs(): number {
+		return 75;
+	}
 }
 
 // ============================================================================
@@ -1039,6 +1250,8 @@ function createTheme(themeJson: ThemeJson, mode?: ColorMode, sourcePath?: string
 		blankLineBetweenTurns: jsonLayout.blankLineBetweenTurns ?? DEFAULT_LAYOUT.blankLineBetweenTurns,
 		footerStyle: jsonLayout.footerStyle ?? DEFAULT_LAYOUT.footerStyle,
 		footerSeparator: jsonLayout.footerSeparator ?? DEFAULT_LAYOUT.footerSeparator,
+		spinnerStyle: jsonLayout.spinnerStyle ?? DEFAULT_LAYOUT.spinnerStyle,
+		bannerAnimation: jsonLayout.bannerAnimation ?? DEFAULT_LAYOUT.bannerAnimation,
 		asciiOnly: jsonLayout.asciiOnly ?? DEFAULT_LAYOUT.asciiOnly,
 	};
 	// ── End Phase 1 resolution ────────────────────────────────────────────

@@ -282,6 +282,20 @@ export class TUI extends Container {
 		return this.fullRedrawCount;
 	}
 
+	/**
+	 * True when the TOP of the rendered buffer is currently on-screen (nothing has scrolled off the
+	 * top into the terminal's scrollback). Reflects the most recently completed render.
+	 *
+	 * Animated headers (e.g. the themed startup banner) MUST freeze their output whenever this is
+	 * false: a frame change above the viewport top straddles the viewport boundary, which forces a
+	 * full-screen clear+repaint — invisible work that flickers ("jitter") on tmux and other layers
+	 * that don't honour synchronized-output. Gating animation on `topVisible` keeps the motion only
+	 * while it is actually visible and provably eliminates that off-screen-churn jitter.
+	 */
+	get topVisible(): boolean {
+		return this.previousViewportTop === 0;
+	}
+
 	getShowHardwareCursor(): boolean {
 		return this.showHardwareCursor;
 	}
