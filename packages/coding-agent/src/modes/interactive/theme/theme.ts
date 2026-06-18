@@ -1050,7 +1050,7 @@ function getBuiltinThemes(): Record<string, ThemeJson> {
 			light: JSON.parse(fs.readFileSync(path.join(themesDir, "light.json"), "utf-8")) as ThemeJson,
 		};
 		// Phase 1: load new built-in themes when present (bundled with the package)
-		for (const name of ["editorial", "brutalist"]) {
+		for (const name of ["editorial", "brutalist", "aurora", "harness"]) {
 			const p = path.join(themesDir, `${name}.json`);
 			if (fs.existsSync(p)) {
 				BUILTIN_THEMES[name] = JSON.parse(fs.readFileSync(p, "utf-8")) as ThemeJson;
@@ -1414,9 +1414,9 @@ export function detectTerminalBackground(options: TerminalThemeDetectionOptions 
 }
 
 export function getDefaultTheme(): string {
-	// Always default to editorial — dark-terminal users get the best experience out of the box.
-	// Light-terminal users should opt in via `pi themes light`.
-	return "editorial";
+	// Aurora is the product's signature look — the full neon TUI out of the box.
+	// Switch anytime via `aurora themes <name>` (e.g. editorial, dark, light).
+	return "aurora";
 }
 
 // ============================================================================

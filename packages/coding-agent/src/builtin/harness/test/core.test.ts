@@ -1,0 +1,434 @@
+// Offline unit tests for the harness core (validator + contract). Run:
+//   node --experimental-strip-types --test test/core.test.ts
+
+import assert from "node:assert/strict";
+import { mkdirSync, rmSync, writeFileSync as writeFile } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { test } from "node:test";
+import {
+	type AgentBundle,
+	buildSystemPrompt,
+	checkContract,
+	finalizeResult,
+	loadExpertise,
+	loadRegistry,
+	parseVerdict,
+	registryView,
+	reviewDecision,
+	runWithReview,
+	type SpawnResult,
+	SYS_HEADER,
+	validateBundle,
+	withRetry,
+} from "../src/core.ts";
+
+const base: AgentBundle = {
+	name: "x",
+	role: "r",
+	model_tier: "fast",
+	tools: ["read"],
+	output_contract: { required_sections: ["## a"] },
+};
+
+test("valid bundle passes", () => {
+	assert.doesNotThrow(() => validateBundle(base));
+});
+
+test("orchestrator with bash is rejected (delegate-never-execute)", () => {
+	assert.throws(() => validateBundle({ ...base, may_spawn: true, tools: ["read", "bash"] }), /must NOT have write/);
+});
+
+test("non-orchestrator with spawn_agent is rejected", () => {
+	assert.throws(() => validateBundle({ ...base, tools: ["read", "spawn_agent"] }), /only the orchestrator/);
+});
+
+test("write-capable bundle scoped into a DEFAULT-protected path is rejected", () => {
+	assert.throws(
+		() => validateBundle({ ...base, tools: ["read", "write"], context_globs: ["secrets/x"] }),
+		/protected path/,
+	);
+});
+
+test("bad model_tier is rejected", () => {
+	assert.throws(() => validateBundle({ ...base, model_tier: "turbo" as any }), /model_tier/);
+});
+
+test("missing output_contract is rejected", () => {
+	assert.throws(() => validateBundle({ ...base, output_contract: { required_sections: [] } }), /required_sections/);
+});
+
+test("contract: required sections present => pass", () => {
+	assert.equal(
+		checkContract("## findings\nx\n## confidence\nhigh", { required_sections: ["## findings", "## confidence"] })
+			.passed,
+		true,
+	);
+});
+
+test("contract: missing section => fail with the missing name", () => {
+	const r = checkContract("## findings only", { required_sections: ["## findings", "## confidence"] });
+	assert.equal(r.passed, false);
+	assert.deepEqual(r.missing, ["## confidence"]);
+});
+
+test("contract: forbidden substring => fail", () => {
+	assert.equal(checkContract("## a\nTODO later", { required_sections: ["## a"], forbidden: ["TODO"] }).passed, false);
+});
+
+test("all seed bundles (incl. orchestrator) load + validate", () => {
+	const reg = loadRegistry(join(import.meta.dirname, "..", "agents"));
+	assert.equal(reg.size, 4);
+	for (const n of ["scout", "builder", "reviewer", "orchestrator"]) assert.ok(reg.has(n), n);
+	assert.equal(reg.get("orchestrator")!.may_spawn, true);
+});
+
+test("orchestrator (may_spawn) with spawn_agent/spawn_agents is valid", () => {
+	assert.doesNotThrow(() =>
+		validateBundle({ ...base, may_spawn: true, tools: ["read", "spawn_agent", "spawn_agents"] }),
+	);
+});
+
+test("non-orchestrator with spawn_agents is rejected", () => {
+	assert.throws(() => validateBundle({ ...base, tools: ["read", "spawn_agents"] }), /only the orchestrator/);
+});
+
+test("validator: a worker bundle with run_team is rejected", () => {
+	assert.throws(() => validateBundle({ ...base, tools: ["read", "run_team"] }), /only the orchestrator/);
+});
+
+test("validator: an orchestrator (may_spawn) with run_team is accepted", () => {
+	assert.doesNotThrow(() =>
+		validateBundle({
+			...base,
+			may_spawn: true,
+			tools: ["read", "run_team"],
+			output_contract: { required_sections: ["## x"] },
+		}),
+	);
+});
+
+test("per-project protected list rejects write-bundle scoped into it", () => {
+	assert.throws(
+		() => validateBundle({ ...base, tools: ["read", "write"], context_globs: ["migrations/x"] }, ["migrations/"]),
+		/protected/,
+	);
+	assert.doesNotThrow(() =>
+		validateBundle({ ...base, tools: ["read", "write"], context_globs: ["src/x"] }, ["migrations/"]),
+	);
+});
+
+// ── withRetry tests (frozen, deterministic, no real subprocess) ─────────────
+const mk = (status: SpawnResult["status"]): SpawnResult => ({
+	agent: "x",
+	status,
+	artifact_excerpt: "",
+	contract: { passed: status === "done", missing: [] },
+	meta: { model: "m", elapsed_s: 0, bytes: 0 },
+});
+
+test("withRetry: default 1 attempt, no retry on failure", async () => {
+	let calls = 0;
+	const result = await withRetry(1, async () => {
+		calls++;
+		return mk("failed");
+	});
+	assert.equal(calls, 1);
+	assert.equal(result.status, "failed");
+});
+
+test("withRetry: stops on first success", async () => {
+	let calls = 0;
+	const result = await withRetry(3, async () => {
+		calls++;
+		return mk(calls < 2 ? "failed" : "done");
+	});
+	assert.equal(calls, 2);
+	assert.equal(result.status, "done");
+});
+
+test("withRetry: exhausts then returns the LAST result", async () => {
+	let calls = 0;
+	let lastReturned: SpawnResult | undefined;
+	const result = await withRetry(3, async () => {
+		calls++;
+		lastReturned = mk("contract_violation");
+		return lastReturned;
+	});
+	assert.equal(calls, 3);
+	assert.deepEqual(result, lastReturned);
+});
+
+test("withRetry: coerces 0/undefined to 1 attempt", async () => {
+	let calls = 0;
+	await withRetry(0, async () => {
+		calls++;
+		return mk("failed");
+	});
+	assert.equal(calls, 1);
+});
+
+test("withRetry: passes prev result into the next attempt", async () => {
+	let firstResult: SpawnResult | undefined;
+	let receivedPrev: SpawnResult | undefined;
+	await withRetry(2, async (attempt, prev) => {
+		if (attempt === 1) {
+			firstResult = mk("failed");
+			return firstResult;
+		}
+		receivedPrev = prev;
+		return mk("done");
+	});
+	assert.ok(firstResult !== undefined);
+	assert.deepEqual(receivedPrev, firstResult);
+});
+
+// ── loadExpertise tests (frozen, no subprocess) ─────────────────────────────────────────────────
+test("loadExpertise: no context_globs → empty string", () => {
+	// no context_globs field
+	assert.equal(loadExpertise({ ...base, _dir: tmpdir() }), "");
+	// no _dir
+	assert.equal(loadExpertise({ ...base, context_globs: ["expertise.md"] }), "");
+});
+
+test("loadExpertise: literal file path is read and included", () => {
+	const dir = join(tmpdir(), `harness-test-${Date.now()}-lit`);
+	try {
+		mkdirSync(dir, { recursive: true });
+		writeFile(join(dir, "expertise.md"), "SECRET_MARKER content");
+		const bundle: AgentBundle = { ...base, _dir: dir, context_globs: ["expertise.md"] };
+		const result = loadExpertise(bundle);
+		assert.ok(result.includes("## Expertise context"), "missing header");
+		assert.ok(result.includes("SECRET_MARKER"), "missing file content");
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+test("loadExpertise: single-level glob matches multiple files", () => {
+	const dir = join(tmpdir(), `harness-test-${Date.now()}-glob`);
+	try {
+		mkdirSync(join(dir, "notes"), { recursive: true });
+		writeFile(join(dir, "notes", "a.md"), "AAA content");
+		writeFile(join(dir, "notes", "b.md"), "BBB content");
+		writeFile(join(dir, "notes", "ignore.txt"), "CCC content");
+		const bundle: AgentBundle = { ...base, _dir: dir, context_globs: ["notes/*.md"] };
+		const result = loadExpertise(bundle);
+		assert.ok(result.includes("AAA"), "missing AAA");
+		assert.ok(result.includes("BBB"), "missing BBB");
+		assert.ok(!result.includes("CCC"), "should not include CCC from ignore.txt");
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+test("loadExpertise: missing glob/dir → empty string", () => {
+	const dir = join(tmpdir(), `harness-test-${Date.now()}-missing`);
+	mkdirSync(dir, { recursive: true });
+	try {
+		const bundle: AgentBundle = { ...base, _dir: dir, context_globs: ["nope/*.md"] };
+		assert.equal(loadExpertise(bundle), "");
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+test("loadExpertise: respects maxBytes cap", () => {
+	const dir = join(tmpdir(), `harness-test-${Date.now()}-cap`);
+	try {
+		mkdirSync(dir, { recursive: true });
+		writeFile(join(dir, "big.md"), "X".repeat(500));
+		const bundle: AgentBundle = { ...base, _dir: dir, context_globs: ["big.md"] };
+		const result = loadExpertise(bundle, 200);
+		assert.ok(result.length <= 260, `result too long: ${result.length}`);
+		assert.ok(result.endsWith("\u2026[expertise truncated]"), "missing truncation marker");
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+// ── parseVerdict tests (frozen) ─────────────────────────────────────────────
+test("parseVerdict: verdict section with APPROVE returns APPROVE", () => {
+	assert.equal(parseVerdict("## verdict\nAPPROVE — 24/24"), "APPROVE");
+});
+
+test("parseVerdict: verdict section with REJECT returns REJECT", () => {
+	assert.equal(parseVerdict("## verdict\nREJECT: signature changed"), "REJECT");
+});
+
+test("parseVerdict: both APPROVE and REJECT present → REJECT wins (fail-closed)", () => {
+	// The phrase \"APPROVE or REJECT\" contains both tokens; REJECT must win
+	assert.equal(parseVerdict("## verdict\nAPPROVE or REJECT"), "REJECT");
+});
+
+test("parseVerdict: no verdict heading and no tokens → UNKNOWN", () => {
+	assert.equal(parseVerdict("just some analysis text with no decision"), "UNKNOWN");
+});
+
+// ── reviewDecision tests (frozen) ────────────────────────────────────────
+test("reviewDecision: build failed → approved false, reason mentions build status", () => {
+	const d = reviewDecision("failed");
+	assert.equal(d.approved, false);
+	assert.ok(d.reason.includes("failed"), `reason should mention 'failed': ${d.reason}`);
+});
+
+test("reviewDecision: build done + APPROVE text → approved true", () => {
+	const d = reviewDecision("done", "## verdict\nAPPROVE: all checks pass");
+	assert.equal(d.approved, true);
+});
+
+test("reviewDecision: build done + REJECT text → approved false", () => {
+	const d = reviewDecision("done", "## verdict\nREJECT: missing tests");
+	assert.equal(d.approved, false);
+});
+
+test("reviewDecision: build done + undefined reviewText → approved false", () => {
+	const d = reviewDecision("done", undefined);
+	assert.equal(d.approved, false);
+});
+
+test("reviewDecision: build done + verdict-less text → approved false (fail-closed)", () => {
+	const d = reviewDecision("done", "looks good to me");
+	assert.equal(d.approved, false);
+});
+
+// ── runWithReview tests (frozen, inject fakes) ──────────────────────────────
+test("runWithReview: build failed → review not called, approved false", async () => {
+	let reviewed = false;
+	const outcome = await runWithReview(
+		async () => mk("failed"),
+		async () => {
+			reviewed = true;
+			return mk("done");
+		},
+	);
+	assert.equal(reviewed, false, "review fn must not be called when build fails");
+	assert.equal(outcome.approved, false);
+	assert.equal(outcome.review, undefined);
+});
+
+test("runWithReview: build done + reviewer APPROVE → approved true, review present", async () => {
+	const outcome = await runWithReview(
+		async () => mk("done"),
+		async () => ({ ...mk("done"), artifact_excerpt: "## verdict\nAPPROVE" }),
+	);
+	assert.equal(outcome.approved, true);
+	assert.ok(outcome.review !== undefined, "review result should be present");
+});
+
+test("runWithReview: build done + reviewer REJECT → approved false", async () => {
+	const outcome = await runWithReview(
+		async () => mk("done"),
+		async () => ({ ...mk("done"), artifact_excerpt: "## verdict\nREJECT" }),
+	);
+	assert.equal(outcome.approved, false);
+});
+
+test("runWithReview: enabled=false + build done → review not called, approved true", async () => {
+	let reviewed = false;
+	const outcome = await runWithReview(
+		async () => mk("done"),
+		async () => {
+			reviewed = true;
+			return mk("done");
+		},
+		{ enabled: false },
+	);
+	assert.equal(reviewed, false, "review fn must not be called when review is disabled");
+	assert.equal(outcome.approved, true);
+	assert.equal(outcome.review, undefined);
+});
+
+// ── buildSystemPrompt tests ────────────────────────────────────────────────────────
+test("buildSystemPrompt: includes header, role, and contract sections", () => {
+	// base has no context_globs → no expertise block
+	const result = buildSystemPrompt({ ...base });
+	assert.ok(result.includes(SYS_HEADER), "missing SYS_HEADER");
+	assert.ok(result.includes(base.role), "missing role");
+	for (const s of base.output_contract.required_sections)
+		assert.ok(result.includes(s), `missing required section: ${s}`);
+	assert.ok(!result.includes("## Expertise context"), "should not have expertise when no context_globs");
+});
+
+test("buildSystemPrompt: includes expertise when context_globs resolve", () => {
+	const dir = join(tmpdir(), `harness-test-bsp-${Date.now()}`);
+	try {
+		mkdirSync(dir, { recursive: true });
+		writeFile(join(dir, "f.md"), "XMARKER content");
+		const bundle: AgentBundle = { ...base, _dir: dir, context_globs: ["f.md"] };
+		const result = buildSystemPrompt(bundle);
+		assert.ok(result.includes("XMARKER"), "missing XMARKER");
+		assert.ok(result.includes("## Expertise context"), "missing expertise header");
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+// ── finalizeResult tests ─────────────────────────────────────────────────────
+const frBundle: AgentBundle = {
+	name: "x",
+	role: "r",
+	model_tier: "fast",
+	tools: ["read"],
+	output_contract: { required_sections: ["## findings"] },
+};
+const completeText = "## findings\nok";
+
+test("finalizeResult: code 0 + complete text → status done, contract passed", () => {
+	const r = finalizeResult(frBundle, completeText, 0, {}, Date.now(), "m");
+	assert.equal(r.status, "done");
+	assert.equal(r.contract.passed, true);
+});
+
+test("finalizeResult: code 0 + missing section → status contract_violation", () => {
+	const r = finalizeResult(frBundle, "no sections here", 0, {}, Date.now(), "m");
+	assert.equal(r.status, "contract_violation");
+});
+
+test("finalizeResult: code null → timeout; code 1 → failed", () => {
+	assert.equal(finalizeResult(frBundle, "", null, {}, Date.now(), "m").status, "timeout");
+	assert.equal(finalizeResult(frBundle, "", 1, {}, Date.now(), "m").status, "failed");
+});
+
+test("finalizeResult: code 0 + complete text + verify=true → verify.passed true, status done", () => {
+	const r = finalizeResult(frBundle, completeText, 0, { verify: "true" }, Date.now(), "m");
+	assert.equal(r.status, "done");
+	assert.equal(r.verify?.passed, true);
+});
+
+test("finalizeResult: code 0 + complete text + verify=false → verify.passed false, status verify_failed", () => {
+	const r = finalizeResult(frBundle, completeText, 0, { verify: "false" }, Date.now(), "m");
+	assert.equal(r.status, "verify_failed");
+	assert.equal(r.verify?.passed, false);
+});
+
+test("finalizeResult: code 0 + complete text + destructive verify → blocked, verify_failed", () => {
+	const r = finalizeResult(frBundle, completeText, 0, { verify: "rm -rf /" }, Date.now(), "m");
+	assert.equal(r.status, "verify_failed");
+	assert.equal(r.verify?.passed, false);
+	const out = (r.verify?.output ?? "").toLowerCase();
+	assert.ok(
+		out.includes("blocked") || out.includes("destructive"),
+		`output should mention blocked/destructive: ${r.verify?.output}`,
+	);
+});
+
+test("registryView: sorted ascending, typed rows, contains seed agents", () => {
+	const reg = loadRegistry(join(import.meta.dirname, "..", "agents"));
+	const rows = registryView(reg);
+	// (a) sorted ascending by name
+	for (let i = 1; i < rows.length; i++)
+		assert.ok(rows[i - 1].name <= rows[i].name, `not sorted at index ${i}: ${rows[i - 1].name} > ${rows[i].name}`);
+	// (b) each row has the expected keys with correct types
+	for (const row of rows) {
+		assert.equal(typeof row.name, "string");
+		assert.equal(typeof row.model_tier, "string");
+		assert.ok(Array.isArray(row.tools), `tools is not an array for ${row.name}`);
+		assert.ok(Array.isArray(row.contract_sections), `contract_sections is not an array for ${row.name}`);
+		assert.equal(typeof row.may_spawn, "boolean");
+	}
+	// (c) contains expected seed agents (do not hard-code total count)
+	const names = rows.map((r) => r.name);
+	for (const expected of ["builder", "reviewer", "scout"])
+		assert.ok(names.includes(expected), `missing seed agent: ${expected}`);
+});

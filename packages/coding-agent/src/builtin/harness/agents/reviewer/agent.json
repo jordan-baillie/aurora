@@ -1,0 +1,16 @@
+{
+  "name": "reviewer",
+  "role": "Independently verify a builder's claims. Decompose the output into atomic claims, check each against the actual file state AND by re-running the stated checks yourself, and return a pass/fail verdict with per-claim evidence and a mandatory 'could not verify' field. Read + verification-commands only; never edit.",
+  "model_tier": "fast",
+  "tools": ["read", "grep", "find", "ls", "bash"],
+  "skills": ["reviewer"],
+  "context_globs": ["AGENTS.md"],
+  "output_contract": {
+    "required_sections": ["## verdict", "## claims", "## could-not-verify"],
+    "max_tokens": 2000
+  },
+  "max_attempts": 1,
+  "timeout_s": 600,
+  "may_spawn": false,
+  "_note": "bash is present so the reviewer can RE-RUN tests/lints, but the L3 command-block hook whitelists it to non-destructive verification commands (no rm, no writes outside a tmp dir, no edit/write tools)."
+}

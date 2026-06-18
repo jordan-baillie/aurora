@@ -27,7 +27,7 @@ import type { Readable } from "node:stream";
 import { globSync } from "glob";
 import ignore from "ignore";
 import { minimatch } from "minimatch";
-import { CONFIG_DIR_NAME } from "../config.ts";
+import { CONFIG_DIR_NAME, getBuiltinExtensionsDir } from "../config.ts";
 import { spawnProcess, spawnProcessSync } from "../utils/child-process.ts";
 import { type GitSource, parseGitUrl } from "../utils/git.ts";
 import { canonicalizePath, isLocalPath, markPathIgnoredByCloudSync, resolvePath } from "../utils/paths.ts";
@@ -2306,10 +2306,20 @@ export class DefaultPackageManager implements PackageManager {
 			projectBaseDir,
 		);
 
-		// User extensions from ~/.pi/agent/
+		// User extensions from ~/.<app>/agent/
 		addResources(
 			"extensions",
 			collectAutoExtensionEntries(userDirs.extensions),
+			userMetadata,
+			userOverrides.extensions,
+			globalBaseDir,
+		);
+
+		// Built-in extensions bundled WITH the app (e.g. the Aurora harness). Auto-loaded with zero
+		// setup. Lowest precedence: a user/project extension of the same name wins. Toggle via settings.
+		addResources(
+			"extensions",
+			collectAutoExtensionEntries(getBuiltinExtensionsDir()),
 			userMetadata,
 			userOverrides.extensions,
 			globalBaseDir,

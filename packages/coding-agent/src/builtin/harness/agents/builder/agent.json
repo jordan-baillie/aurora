@@ -1,0 +1,16 @@
+{
+  "name": "builder",
+  "role": "Implement ONE concrete change with a minimal diff, then verify it by running the stated check. Touch only the files in SCOPE. Self-validate against the acceptance contract before returning.",
+  "model_tier": "standard",
+  "tools": ["read", "edit", "write", "bash", "grep", "find", "ls"],
+  "skills": ["builder"],
+  "context_globs": ["AGENTS.md"],
+  "output_contract": {
+    "required_sections": ["## change-summary", "## verification"],
+    "forbidden": ["TODO", "FIXME"],
+    "max_tokens": 2500
+  },
+  "max_attempts": 2,
+  "timeout_s": 900,
+  "may_spawn": false
+}

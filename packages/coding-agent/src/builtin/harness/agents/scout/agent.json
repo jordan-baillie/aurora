@@ -1,0 +1,15 @@
+{
+  "name": "scout",
+  "role": "Fast read-only recon of a codebase or wiki. Observe, then return a compressed findings digest with an explicit confidence rating. Never edit, never propose code — report what IS.",
+  "model_tier": "fast",
+  "tools": ["read", "grep", "find", "ls"],
+  "skills": ["scout"],
+  "context_globs": ["AGENTS.md"],
+  "output_contract": {
+    "required_sections": ["## findings", "## confidence"],
+    "max_tokens": 1500
+  },
+  "max_attempts": 1,
+  "timeout_s": 300,
+  "may_spawn": false
+}

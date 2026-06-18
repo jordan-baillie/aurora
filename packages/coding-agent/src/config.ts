@@ -367,6 +367,21 @@ export function getThemesDir(): string {
 }
 
 /**
+ * Get the directory of extensions that ship WITH the app (auto-loaded, lowest precedence).
+ * Used to bundle first-party capabilities (e.g. the Aurora harness) so they work with zero setup.
+ * - Bun binary: builtin/extensions/ next to executable
+ * - Node.js (dist/) or tsx (src/): <src|dist>/builtin/extensions/
+ */
+export function getBuiltinExtensionsDir(): string {
+	if (isBunBinary) {
+		return join(getPackageDir(), "builtin", "extensions");
+	}
+	const packageDir = getPackageDir();
+	const srcOrDist = existsSync(join(packageDir, "src")) ? "src" : "dist";
+	return join(packageDir, srcOrDist, "builtin", "extensions");
+}
+
+/**
  * Get path to HTML export template directory (shipped with package)
  * - For Bun binary: export-html/ next to executable
  * - For Node.js (dist/): dist/core/export-html/

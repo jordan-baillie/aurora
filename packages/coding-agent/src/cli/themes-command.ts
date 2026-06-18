@@ -6,7 +6,7 @@
  */
 
 import chalk from "chalk";
-import { getAgentDir } from "../config.ts";
+import { APP_NAME, getAgentDir } from "../config.ts";
 import { SettingsManager } from "../core/settings-manager.ts";
 import { getAvailableThemesWithPaths, getThemeByName } from "../modes/interactive/theme/theme.ts";
 
@@ -198,9 +198,9 @@ export async function runThemesCommand(args: string[]): Promise<void> {
 	}
 
 	// Footer hint
-	const currentTheme = settingsManager.getTheme() ?? "editorial";
+	const currentTheme = settingsManager.getTheme() ?? "aurora";
 	console.log(chalk.dim(`Current theme: ${currentTheme}`));
-	console.log(chalk.dim(`To switch: pi themes <name>  (e.g. pi themes editorial)`));
+	console.log(chalk.dim(`To switch: ${APP_NAME} themes <name>  (e.g. ${APP_NAME} themes editorial)`));
 	console.log();
 }
 

@@ -1,0 +1,8 @@
+{
+  "name": "build-review",
+  "description": "Build a change, then independently review it.",
+  "stages": [
+    [ { "agent": "builder",  "prompt": "{{task}}" } ],
+    [ { "agent": "reviewer", "prompt": "Independently review the latest git diff against this task: {{task}}" } ]
+  ]
+}
