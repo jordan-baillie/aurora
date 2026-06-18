@@ -3,7 +3,7 @@
 // JSONL framing: split on \n only, strip trailing \r — never use node readline.
 import { spawn } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
-import { type AgentBundle, buildSystemPrompt, DEFAULT_PROTECTED, GUARD_EXT, MODEL } from "./core.ts";
+import { type AgentBundle, assertOAuthRouting, buildSystemPrompt, GUARD_EXT, MODEL, spawnEnv } from "./core.ts";
 import { AGENT_BIN } from "./paths.ts";
 import type { PooledWorker } from "./pool.ts";
 
@@ -49,10 +49,8 @@ export class RpcWorker implements PooledWorker {
 		];
 		if (hasWrite) args.push("-e", GUARD_EXT);
 
-		const env = { ...process.env };
-		delete (env as any).ANTHROPIC_API_KEY; // force $0 OAuth
-		env.HARNESS_ROOT = opts.root ?? process.cwd();
-		env.HARNESS_PROTECTED = (opts.protected ?? DEFAULT_PROTECTED).join(":");
+		const env = spawnEnv(opts.root, opts.protected);
+		assertOAuthRouting(env, sys); // $0-OAuth canary: fail-closed before we spawn the rpc worker
 
 		const proc = spawn(AGENT_BIN, args, {
 			env,

@@ -2,6 +2,7 @@
 // standalone under `node --experimental-strip-types`. The Pi extension wraps this; single-sourced.
 
 import { spawn, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { AGENT_BIN, AGENTS_DIR as GLOBAL_AGENTS } from "./paths.ts"; // derived from install location, env-overridable
@@ -22,6 +23,7 @@ export interface AgentBundle {
 	max_attempts?: number;
 	timeout_s?: number;
 	may_spawn?: boolean;
+	expertise?: boolean; // opt into a self-maintained expertise.md (read at boot, appended on success)
 	_dir?: string;
 }
 
@@ -32,7 +34,7 @@ export const MODEL: Record<AgentBundle["model_tier"], string> = {
 };
 export const SYS_HEADER = "You are Claude Code, Anthropic's official CLI for Claude."; // $0-OAuth routing
 const WRITE_TOOLS = new Set(["edit", "write", "bash"]);
-export const DELEGATION_TOOLS = new Set(["spawn_agent", "spawn_agents", "run_team"]);
+export const DELEGATION_TOOLS = new Set(["spawn_agent", "spawn_agents", "run_team", "run_blueprint"]);
 // Generic, project-AGNOSTIC defaults. Per-project additions come from `.harness.json` { protected: [...] }.
 export const DEFAULT_PROTECTED = [".env", "/.git/", "secrets", "credentials", ".pem", ".key", "id_rsa", "id_ed25519"];
 
@@ -134,6 +136,63 @@ export function registryView(reg: Map<string, AgentBundle>): RegistryRow[] {
 		.sort((a, b) => a.name.localeCompare(b.name));
 }
 
+// ── registry index (the orchestrator's machine-readable roster) ───────────────────────
+// Single-sourced from registryView + each bundle's role. `hash` is a content hash over the agent
+// rows (NOT generated_at) so it is stable across loads while the bundles are unchanged — enabling
+// idempotent writes + drift detection.
+export interface RegistryIndexEntry extends RegistryRow {
+	role: string;
+}
+export interface RegistryIndex {
+	generated_at: string;
+	hash: string;
+	count: number;
+	agents: RegistryIndexEntry[];
+}
+export function registryIndex(reg: Map<string, AgentBundle>): RegistryIndex {
+	const byName = new Map([...reg.values()].map((b) => [b.name, b.role] as const));
+	const agents: RegistryIndexEntry[] = registryView(reg).map((r) => ({ ...r, role: byName.get(r.name) ?? "" }));
+	const hash = createHash("sha256").update(JSON.stringify(agents)).digest("hex").slice(0, 16);
+	return { generated_at: new Date().toISOString(), hash, count: agents.length, agents };
+}
+
+// Compact one-line-per-agent roster for tool descriptions — the AUTHORITATIVE registry awareness
+// (always injected into the orchestrator's prompt; never stale, no file dependency).
+export function registryDigest(reg: Map<string, AgentBundle>, opts: { exclude?: string[] } = {}): string {
+	const ex = new Set(opts.exclude ?? []);
+	return registryView(reg)
+		.filter((r) => !ex.has(r.name))
+		.map((r) => `${r.name}[${r.model_tier}; tools:${r.tools.join("/")}; ->${r.contract_sections.join("+")}]`)
+		.join(" \u00b7 ");
+}
+
+// Idempotent write of the registry index to `path`. Skips the write when the on-disk hash already
+// matches (no mtime churn); creates parent dirs. Returns whether it wrote. Best-effort callers may
+// ignore throws (a read-only install still has the authoritative tool-description digest).
+export function writeRegistryIndex(
+	reg: Map<string, AgentBundle>,
+	path: string,
+): { path: string; hash: string; written: boolean } {
+	const idx = registryIndex(reg);
+	try {
+		const existing = JSON.parse(readFileSync(path, "utf8")) as { hash?: string };
+		if (existing?.hash === idx.hash) return { path, hash: idx.hash, written: false };
+	} catch {
+		/* missing or unparseable → (re)write */
+	}
+	mkdirSync(dirname(path), { recursive: true });
+	writeFileSync(path, `${JSON.stringify(idx, null, 2)}\n`);
+	return { path, hash: idx.hash, written: true };
+}
+
+// ── template fill (shared by teams + blueprints; fail-closed on a missing var) ─────────
+export function fillTemplate(tpl: string, vars: Record<string, string>): string {
+	return tpl.replace(/\{\{\s*([\w.-]+)\s*\}\}/g, (_m, k) => {
+		if (!(k in vars)) throw new Error(`template references undefined var '${k}'`);
+		return vars[k];
+	});
+}
+
 // ── output contract (L3 / agent-native verification) ─────────────────────────
 export function checkContract(text: string, c: OutputContract): { passed: boolean; missing: string[] } {
 	const missing = c.required_sections.filter((s) => !text.includes(s));
@@ -173,24 +232,94 @@ export function escapesRoot(target: string, root: string): boolean {
 const _guardBase = join(import.meta.dirname, "..", "extension", "guard");
 export const GUARD_EXT = existsSync(`${_guardBase}.js`) ? `${_guardBase}.js` : `${_guardBase}.ts`;
 
-// ── window governor (weighted; queues on the Claude-Max window) ───────────────
+// ── $0-OAuth canary ───────────────────────────────────────────────────────────
+// Make "a worker spawn that silently bills pay-per-token" UNREPRESENTABLE. Every spawn path
+// (oneshot `pi -p` + pooled `pi --mode rpc`) constructs its env via spawnEnv() and MUST pass
+// through this canary before exec — so the $0 routing rule is tool-layer-enforced, not convention.
+// (Routing rule: ANY non-empty --system-prompt routes to the Claude-Max subscription; a present
+// ANTHROPIC_API_KEY makes the CLI silently prefer the key and bill it.)
+export function spawnEnv(root?: string, protectedList?: string[]): NodeJS.ProcessEnv {
+	const env = { ...process.env };
+	delete (env as { ANTHROPIC_API_KEY?: string }).ANTHROPIC_API_KEY; // force $0 OAuth — never bill a key
+	env.HARNESS_ROOT = root ?? process.cwd();
+	env.HARNESS_PROTECTED = (protectedList ?? DEFAULT_PROTECTED).join(":");
+	return env;
+}
+export function assertOAuthRouting(env: NodeJS.ProcessEnv, sysPrompt: string): void {
+	if (env.ANTHROPIC_API_KEY)
+		throw new Error(
+			"$0-OAuth canary: ANTHROPIC_API_KEY present in worker env — would route to pay-per-token billing; eject it before spawn",
+		);
+	if (!sysPrompt || !sysPrompt.trim())
+		throw new Error(
+			"$0-OAuth canary: empty --system-prompt — routes to pay-per-token extra usage; a non-empty system prompt is required for Claude-Max routing",
+		);
+}
+
+// ── window governor (weighted concurrency + Claude-Max rolling-window tracking) ─────────────
+// $0 marginal cost, but the rolling 5h Claude-Max window is the real limit. The governor caps
+// simultaneous WEIGHT (frontier costs more than fast) AND tracks estimated token consumption inside
+// the rolling window. windowPct() surfaces that to observability; when a hard budget is configured
+// (budgetTokens > 0) admit() also queues once the window is exhausted, draining as old usage ages out.
 const WEIGHT = { fast: 1, standard: 2, frontier: 4 } as const;
-export class Governor {
+export const DEFAULT_WINDOW_MS = 5 * 60 * 60 * 1000; // Claude-Max rolling 5h
+// Rough output/input token estimate from character count (~4 chars/token). Labelled an estimate
+// because we do not get exact provider usage off the subprocess; a proxy beats count-only gating.
+export function estimateTokens(chars: number): number {
+	return Math.max(0, Math.ceil(chars / 4));
+}
+export interface WindowGovernorOpts {
+	maxWeight?: number;
+	windowMs?: number;
+	budgetTokens?: number; // 0 => tracking only (no hard gate, never hangs a session)
+}
+export class WindowGovernor {
 	private inUse = 0;
-	private maxWeight: number;
-	constructor(maxWeight = 8) {
-		this.maxWeight = maxWeight;
+	private readonly maxWeight: number;
+	private readonly windowMs: number;
+	private readonly budgetTokens: number;
+	private events: Array<{ ts: number; tokens: number }> = [];
+	constructor(opts: WindowGovernorOpts = {}) {
+		this.maxWeight = opts.maxWeight ?? 8;
+		this.windowMs = opts.windowMs ?? DEFAULT_WINDOW_MS;
+		this.budgetTokens = Math.max(0, opts.budgetTokens ?? 0);
+	}
+	private prune(now: number): void {
+		const cut = now - this.windowMs;
+		while (this.events.length && this.events[0].ts < cut) this.events.shift();
+	}
+	// Estimated tokens consumed inside the current rolling window.
+	consumed(now = Date.now()): number {
+		this.prune(now);
+		let sum = 0;
+		for (const e of this.events) sum += e.tokens;
+		return sum;
+	}
+	// Record a completed spawn's estimated token cost against the window.
+	record(tokens: number, now = Date.now()): void {
+		if (tokens > 0) this.events.push({ ts: now, tokens });
+	}
+	// % of the Claude-Max window consumed (0 when no budget configured — tracking only).
+	windowPct(now = Date.now()): number {
+		if (!this.budgetTokens) return 0;
+		return Math.min(100, Math.round((this.consumed(now) / this.budgetTokens) * 100));
+	}
+	// % of the concurrency budget in use.
+	loadPct(): number {
+		return Math.round((this.inUse / this.maxWeight) * 100);
+	}
+	private hasHeadroom(w: number): boolean {
+		if (this.inUse + w > this.maxWeight) return false; // concurrency cap
+		if (this.budgetTokens && this.consumed() >= this.budgetTokens) return false; // window exhausted
+		return true;
 	}
 	async admit(b: AgentBundle): Promise<() => void> {
 		const w = WEIGHT[b.model_tier];
-		while (this.inUse + w > this.maxWeight) await new Promise((r) => setTimeout(r, 200));
+		while (!this.hasHeadroom(w)) await new Promise((r) => setTimeout(r, 200));
 		this.inUse += w;
 		return () => {
 			this.inUse -= w;
 		};
-	}
-	loadPct(): number {
-		return Math.round((this.inUse / this.maxWeight) * 100);
 	}
 }
 
@@ -201,6 +330,7 @@ export interface SpawnResult {
 	artifact_excerpt: string;
 	contract: { passed: boolean; missing: string[] };
 	verify?: { cmd: string; passed: boolean; output: string };
+	cached?: "cache" | "inflight"; // set when this result was served from the within-run result cache (#5)
 	meta: { model: string; elapsed_s: number; bytes: number };
 }
 
@@ -272,15 +402,71 @@ export function loadExpertise(bundle: AgentBundle, maxBytes = 8000): string {
 	return out;
 }
 
-// Single source for a worker's system prompt: routing header + role + output-contract instruction + expertise.
+// ── persistent expertise (#7): a per-bundle, self-maintained expertise.md ──────
+// The bundle opts in with `expertise: true`. The harness reads the file into the worker's prompt at
+// boot (newest notes kept) and, on a successful run, appends the worker's optional `## expertise`
+// self-note (deduped, capped). The agent owns the file; lessons compound across runs.
+export function parseExpertiseNote(text: string): string {
+	const m = text.match(/##\s*expertise\b([\s\S]*?)(?:\n##\s|$)/i);
+	return m ? m[1].trim() : "";
+}
+export function loadExpertiseMemory(bundle: AgentBundle, maxBytes = 4000): string {
+	if (!bundle.expertise || !bundle._dir) return "";
+	let body: string;
+	try {
+		body = readFileSync(join(bundle._dir, "expertise.md"), "utf8");
+	} catch {
+		return "";
+	}
+	if (!body.trim()) return "";
+	const clipped = body.length > maxBytes ? body.slice(-maxBytes) : body; // keep the newest (end)
+	return `## Prior expertise (your own self-maintained notes)\n${clipped}`;
+}
+// Append a note to the bundle's expertise.md: dedup (skip if already present), timestamp, and cap to
+// the last `maxEntries` notes. Returns whether it wrote.
+export function appendExpertiseNote(bundle: AgentBundle, note: string, opts: { maxEntries?: number } = {}): boolean {
+	const dir = bundle._dir;
+	const trimmed = note.trim();
+	if (!dir || !trimmed) return false;
+	const path = join(dir, "expertise.md");
+	const maxEntries = Math.max(1, opts.maxEntries ?? 40);
+	let existing = "";
+	try {
+		existing = readFileSync(path, "utf8");
+	} catch {
+		/* new file */
+	}
+	if (existing.includes(trimmed)) return false; // dedup — already recorded
+	const blocks: string[] = [];
+	let cur: string[] | null = null;
+	for (const ln of existing.split("\n")) {
+		if (/^## /.test(ln)) {
+			if (cur) blocks.push(cur.join("\n").trim());
+			cur = [ln];
+		} else if (cur) cur.push(ln);
+	}
+	if (cur) blocks.push(cur.join("\n").trim());
+	blocks.push(`## ${new Date().toISOString()}\n${trimmed}`);
+	const header = `# ${bundle.name} expertise (self-maintained; newest last)`;
+	const body = `${header}\n\n${blocks.slice(-maxEntries).join("\n\n")}\n`;
+	mkdirSync(dir, { recursive: true });
+	writeFileSync(path, body);
+	return true;
+}
+
+// Single source for a worker's system prompt: routing header + role + output-contract instruction +
+// scoped context (context_globs) + self-maintained expertise memory (#7).
 export function buildSystemPrompt(bundle: AgentBundle): string {
-	const sys = [
+	const lines = [
 		SYS_HEADER,
 		bundle.role,
 		`End your reply with exactly these markdown sections: ${bundle.output_contract.required_sections.join(", ")}.`,
-	].join("\n\n");
-	const expertise = loadExpertise(bundle);
-	return expertise ? `${sys}\n\n${expertise}` : sys;
+	];
+	if (bundle.expertise)
+		lines.push(
+			"You MAY add a final optional '## expertise' section: 1-3 terse, durable bullet lessons for your future self (a gotcha, params that worked). It is recorded across runs — omit it if you learned nothing new.",
+		);
+	return [lines.join("\n\n"), loadExpertiseMemory(bundle), loadExpertise(bundle)].filter(Boolean).join("\n\n");
 }
 
 // Build the SpawnResult from a worker's final text + exit code: contract check · deterministic verify
@@ -312,6 +498,15 @@ export function finalizeResult(
 			const passed = v.status === 0;
 			verify = { cmd: opts.verify, passed, output: ((v.stdout ?? "") + (v.stderr ?? "")).slice(-1200) };
 			if (!passed) status = "verify_failed";
+		}
+	}
+	// Persistent expertise write-back (#7): on success, fold the worker's optional self-note into its
+	// bundle's expertise.md so lessons compound across runs (best-effort; never fails the result).
+	if (status === "done" && bundle.expertise) {
+		try {
+			appendExpertiseNote(bundle, parseExpertiseNote(text));
+		} catch {
+			/* best-effort */
 		}
 	}
 	let artifact_path: string | undefined;
@@ -370,10 +565,8 @@ export function spawnOnce(
 	// Hardening: load the guard into any worker that can write/exec (blocks destructive bash +
 	// out-of-root / protected-path writes at the tool layer — enforcement, not prompt convention).
 	if (bundle.tools.some((t) => t === "bash" || t === "write" || t === "edit")) args.push("-e", GUARD_EXT);
-	const env = { ...process.env };
-	delete (env as any).ANTHROPIC_API_KEY; // force $0 OAuth
-	env.HARNESS_ROOT = opts.root ?? process.cwd();
-	env.HARNESS_PROTECTED = (opts.protected ?? DEFAULT_PROTECTED).join(":");
+	const env = spawnEnv(opts.root, opts.protected);
+	assertOAuthRouting(env, sys); // $0-OAuth canary: fail-closed before we spawn anything
 	const t0 = Date.now();
 	return new Promise((resolve) => {
 		const child = spawn(AGENT_BIN, args, { env });

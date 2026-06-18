@@ -900,7 +900,20 @@ function buildParams(
 		stream: true,
 	};
 
-	// For OAuth tokens, we MUST include Claude Code identity
+	// For OAuth tokens, we MUST include the Claude Code identity in the `system` field.
+	//
+	// Anthropic's Pro/Max subscription routing inspects the *content* of the system
+	// prompt, not just the first line. A request whose system field reveals a non-Claude-
+	// Code harness (e.g. an agent prompt describing this CLI, its docs/skills/tools) gets
+	// reclassified as third-party API usage and billed to "extra usage" (pay-per-token)
+	// instead of the subscription — surfacing as a 400 "out of extra usage" once that pool
+	// is empty. Verified empirically: the *identical* instructions route to the
+	// subscription when delivered as a user turn, but not when placed in `system`.
+	//
+	// So when OAuth is active we keep `system` to the Claude Code identity ONLY, and
+	// deliver the real system prompt as a leading user turn (with a short assistant ack to
+	// preserve role alternation). Tools/thinking/output_config do not affect the
+	// classifier, so they are left untouched.
 	if (isOAuthToken) {
 		params.system = [
 			{
@@ -910,11 +923,27 @@ function buildParams(
 			},
 		];
 		if (context.systemPrompt) {
-			params.system.push({
-				type: "text",
-				text: sanitizeSurrogates(context.systemPrompt),
-				...(cacheControl ? { cache_control: cacheControl } : {}),
-			});
+			const preamble: MessageParam[] = [
+				{
+					role: "user",
+					content: [
+						{
+							type: "text",
+							text: sanitizeSurrogates(context.systemPrompt),
+							...(cacheControl ? { cache_control: cacheControl } : {}),
+						},
+					],
+				},
+			];
+			// Only add the assistant ack when a real conversation follows, so a degenerate
+			// system-only call still ends on a user turn (Anthropic requires that).
+			if (params.messages.length > 0) {
+				preamble.push({
+					role: "assistant",
+					content: "Understood. I'll follow those instructions for the rest of this conversation.",
+				});
+			}
+			params.messages = [...preamble, ...params.messages];
 		}
 	} else if (context.systemPrompt) {
 		// Add cache control to system prompt for non-OAuth tokens

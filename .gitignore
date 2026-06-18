@@ -9,6 +9,9 @@ packages/*/dist-chrome/
 packages/*/dist-firefox/
 *.cpuprofile
 
+# Harness — agent-maintained expertise files (generated at runtime, never committed)
+packages/coding-agent/src/builtin/harness/agents/*/expertise.md
+
 # Environment
 .env
 

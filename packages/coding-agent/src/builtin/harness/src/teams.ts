@@ -2,7 +2,11 @@
 // A "team" is a declarative recipe: sequential stages, steps within each stage run in parallel.
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { type AgentBundle, resolveProject } from "./core.ts";
+import { type AgentBundle, fillTemplate, resolveProject } from "./core.ts";
+
+// Re-exported so existing callers/tests that import it from teams keep working; single-sourced in core.
+export { fillTemplate } from "./core.ts";
+
 import { TEAMS_DIR } from "./paths.ts";
 
 export interface TeamStep {
@@ -55,14 +59,6 @@ export function loadTeams(registry: Map<string, AgentBundle>, cwd = process.cwd(
 		}
 	}
 	return teams;
-}
-
-// fill {{var}} from vars; FAIL-CLOSED on a missing variable (never run a half-filled prompt).
-export function fillTemplate(tpl: string, vars: Record<string, string>): string {
-	return tpl.replace(/\{\{\s*([\w.-]+)\s*\}\}/g, (_m, k) => {
-		if (!(k in vars)) throw new Error(`template references undefined var '${k}'`);
-		return vars[k];
-	});
 }
 
 export interface TeamStepResult {

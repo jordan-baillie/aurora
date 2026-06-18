@@ -2,6 +2,21 @@
 
 ## [Unreleased]
 
+### Added
+
+- Aurora harness: **blueprints** (`run_blueprint`) — a code-defined DAG that interleaves deterministic shell *code nodes* (run by the harness itself, non-destructive-guarded) with scoped *agent nodes*. Continuous wide parallelism (nodes launch as soon as their `depends_on` are done), fail-closed dependent skipping, and `{{node.<id>}}` output passing. Fail-closed loader (unique ids, exactly-one-kind, known non-spawn agents, acyclic via Kahn); ships `scout-build-verify` and reads global + project-local `.pi/blueprints/`.
+- Aurora harness: **$0-OAuth canary** (`assertOAuthRouting`) — every spawn path (oneshot + pooled rpc) constructs its env via the single-sourced `spawnEnv` and fails closed before exec if `ANTHROPIC_API_KEY` is present or the `--system-prompt` is empty, making a silently-billed worker spawn unrepresentable.
+- Aurora harness: **pool pre-warm** (`HARNESS_PREWARM=scout,builder`) — stands up `HARNESS_POOL_SIZE` idle `pi --mode rpc` workers per named bundle at session start (fire-and-forget, drained on shutdown) so first spawns are instant. A pre-warmed bundle then routes to its hot pool at any batch size (`pickTransport` is pre-warm-aware), and `run_team`/`run_blueprint` benefit automatically.
+- Aurora harness: **within-run result cache + in-flight dedup** — identical read-only sub-tasks (same agent/model/tools/prompt/verify) collapse to one execution; concurrent duplicates share an in-flight promise and completed results are reused within the session (`ResultCache`). Side-effecting (write/edit/bash) agents are never cached (returning a cached artifact without re-applying side effects would be a correctness hazard). Cache hits cost no window tokens. Disable with `HARNESS_NO_CACHE=1`.
+- Aurora harness: **shift-left write validation** — the worker guard runs an EXACT syntax check (`validateContent`: JSON via `JSON.parse`, Python via `py_compile` when available) on the content a `write` is about to commit and blocks a syntactically broken write with the parser error fed back to the agent. Exact-only (zero false positives); unsupported types skipped.
+- Aurora harness: **persistent expertise** — a bundle with `expertise: true` (enabled on `scout`) gets a self-maintained `expertise.md` read into its prompt at boot and appended with the worker's optional `## expertise` self-note on success (deduped, capped). Generated expertise files are git-ignored.
+- Aurora harness: **fleet-level observability** — a cross-run spawn ledger (`~/.aurora/harness/fleet.jsonl`) with `aggregateFleet`/`fleetDigest` (cost-per-intelligent-agent-hour, done-rates, cache-hit-rate, rendered to `fleet-summary.md` on shutdown), plus a boot-time prompt audit (`auditPrompt`) that flags skill-bloated worker prompts.
+- Aurora harness: **registry index + digest** — the harness injects a compact roster (`registryDigest`: `name[tier; tools; ->contract]`) into the `spawn_agent`/`spawn_agents` tool descriptions (authoritative, always-present registry awareness) and writes a content-hashed machine-readable index (`registryIndex` → `~/.aurora/harness/registry-index.json`, idempotent by hash). Fixes the orchestrator skill that previously referenced a non-existent `~/.pi/agent/agents/index.json`.
+
+### Changed
+
+- Aurora harness: the spawn governor is now **window-aware** (`WindowGovernor`) — alongside the weighted concurrency cap it tracks estimated token consumption against the Claude-Max rolling 5h window (`windowPct`, surfaced to observability). `HARNESS_WINDOW_TOKENS > 0` opts into a hard window gate; the default tracks-and-surfaces only.
+
 ### Fixed
 
 - Fixed `RpcClient` to reject pending requests and consume stdin pipe errors when the child process exits unexpectedly ([#4764](https://github.com/earendil-works/pi/issues/4764)).

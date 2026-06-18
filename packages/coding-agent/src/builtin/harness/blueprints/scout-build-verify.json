@@ -1,0 +1,28 @@
+{
+  "name": "scout-build-verify",
+  "description": "Recon -> build -> deterministic diff gate (a CODE node the harness runs itself) -> independent review. The LLM runs only inside the scoped agent nodes; the gate is pure code. Vars: {{task}}.",
+  "nodes": [
+    {
+      "id": "recon",
+      "agent": "scout",
+      "prompt": "ROLE: fast read-only recon.\nTASK: {{task}}\nSCOPE: only the files relevant to the task.\nTERMINAL: emit the two sections and stop; do not propose code.\nACCEPTANCE: end with '## findings' and '## confidence'."
+    },
+    {
+      "id": "build",
+      "depends_on": ["recon"],
+      "agent": "builder",
+      "prompt": "ROLE: implement ONE minimal-diff change.\nTASK: {{task}}\nINPUTS (scout findings):\n{{node.recon}}\nTERMINAL: stop after the change verifies; do not refactor unrelated code.\nACCEPTANCE: end with '## change-summary' and '## verification'."
+    },
+    {
+      "id": "gate",
+      "depends_on": ["build"],
+      "run": "git diff --stat"
+    },
+    {
+      "id": "review",
+      "depends_on": ["build", "gate"],
+      "agent": "reviewer",
+      "prompt": "ROLE: independent reviewer.\nTASK: verify the change for: {{task}}\nINPUTS (builder change-summary):\n{{node.build}}\nINPUTS (diff stat):\n{{node.gate}}\nACCEPTANCE: end with '## verdict' (APPROVE/REJECT), '## claims', '## could-not-verify'."
+    }
+  ]
+}

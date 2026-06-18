@@ -2,6 +2,9 @@
 	"name": "pi-monorepo",
 	"private": true,
 	"type": "module",
+	"bin": {
+		"aurora": "packages/coding-agent/dist/cli.js"
+	},
 	"workspaces": [
 		"packages/*",
 		"packages/coding-agent/examples/extensions/with-deps",

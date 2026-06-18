@@ -19,9 +19,12 @@ task yourself, that is a signal to spawn a specialist for it.
 
 ## The loop (run this every time)
 
-1. **Read the registry.** `read ~/.pi/agent/agents/index.json` → know which specialists exist and each
-   one's `role`, `tools`, and `output_contract`. Only delegate to specialists that exist; if none fits,
-   say so and propose adding a bundle — do not improvise an unscoped agent.
+1. **Know the registry.** Your `spawn_agent` / `spawn_agents` tool descriptions list every available
+   specialist as `name[tier; tools; ->contract]` — that compact roster IS your registry (always
+   injected, never stale). For full `role` detail the harness also writes a machine-readable index to
+   `~/.aurora/harness/registry-index.json` (exact path shown in the tool description); `read` it if you
+   need more than the digest. Only delegate to specialists that exist; if none fits, say so and propose
+   adding a bundle — do not improvise an unscoped agent.
 2. **Decompose into a DAG.** Break the goal into the **smallest independent units of work**. Mark each
    unit's `depends_on`. Independent units are your parallelism — exploit it. Prefer **wide** (many small
    parallel tasks) over **deep** (one agent doing many steps).
@@ -67,6 +70,19 @@ DO NOT: <the 2-3 most likely off-task temptations to pre-empt — see negative-s
   that "tests pass".** Workers with write/bash are also guarded (destructive + out-of-scope writes are blocked).
 - **Give it its inputs, not the world.** Reference upstream artifact paths; never paste your full context.
 
+## Reusable pipelines (run_team / run_blueprint)
+
+When the SAME shape of work recurs, don't re-plan it each turn — run a saved recipe:
+- **`run_team({ team, vars })`** — sequential stages, parallel steps within a stage. Best for a simple
+  staged pipeline (e.g. build then review).
+- **`run_blueprint({ blueprint, vars })`** — a **code-defined DAG**. Use it when the pipeline has
+  *deterministic* steps that should NOT be done by an LLM (lint, `git diff`, build, format) plus scoped
+  agent steps, and arbitrary `depends_on` edges. Code nodes run as pure shell (the harness runs them,
+  not an agent); agent nodes run a specialist; a node launches the moment its deps are `done`; a failed
+  upstream fail-closes its dependents; downstream nodes read upstream output via `{{node.<id>}}`.
+  Prefer a blueprint over hand-fanning when you find yourself writing the same DAG twice — it makes the
+  deterministic parts unbypassable and removes them from the model's blast radius.
+
 ## Parallelism & scale discipline
 
 - **Fan out wide.** N independent scouts in one turn beats one scout doing N things. Put them in the
@@ -75,7 +91,9 @@ DO NOT: <the 2-3 most likely off-task temptations to pre-empt — see negative-s
   expected; don't retry-spam, let it admit.
 - **Tier by role.** Trust the registry's `model_tier` (scouts=fast, builders=standard, your own
   reasoning=frontier). Don't request a heavier model than the task needs.
-- **Cache within a run.** If two tasks need the same recon, spawn one scout and pass its artifact to both.
+- **Cache within a run.** Identical read-only spawns (same agent + prompt) auto-dedup to one execution
+  and the result is reused — so don't fear re-asking a scout the exact same question, but still prefer
+  to spawn one scout and pass its artifact to both dependents when you can.
 
 ## Worked example
 

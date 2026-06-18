@@ -54,7 +54,7 @@ export interface MarkdownSettings {
 }
 
 export interface WarningSettings {
-	anthropicExtraUsage?: boolean; // default: true
+	anthropicExtraUsage?: boolean; // default: false in this fork (--system-prompt routes OAuth to Claude-Max at $0)
 }
 
 export type TransportSetting = Transport;

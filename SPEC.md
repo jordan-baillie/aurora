@@ -34,6 +34,13 @@ verifier), **orchestrator** (frontier, delegate-only).
 **Effective registry = global (`agents/`) + project-local (`<project>/.pi/agents/`)**, the latter
 overriding by name. Resolved by walking up from `cwd` to the nearest `.harness.json`/`.git`.
 
+**Registry awareness (the orchestrator's roster).** At load the harness builds a compact digest
+(`registryDigest` — `name[tier; tools; ->contract]` per specialist) and injects it into the
+`spawn_agent`/`spawn_agents` tool descriptions: this is the *authoritative*, always-present roster (no
+file read, never stale). It also writes a content-hashed machine-readable index (`registryIndex` →
+`~/.aurora/harness/registry-index.json`, idempotent by hash, best-effort) for humans/tooling and for
+an orchestrator that wants full `role` detail.
+
 ### A.2 Fail-closed validator
 Runs at load (`validateBundle`). Rejects unsafe shapes structurally:
 - an orchestrator (`may_spawn`) holding `write`/`edit`/`bash` (it delegates, never executes);
@@ -50,15 +57,34 @@ routing through the user's Claude subscription), captures the result, and checks
 (`checkContract`): every `required_section` heading must be present and no `forbidden` string may
 appear. A contract miss marks the result failed.
 
-### A.4 Window-budget governor
-`spawn_agents` enforces a max concurrent weight (`max_weight`, default 8, per-project override in
-`.harness.json`). Fan-out beyond the budget queues; independent tasks run concurrently up to the cap.
+### A.4 Window-aware governor
+`WindowGovernor` enforces a max concurrent **weight** (`max_weight`, default 8, per-project override in
+`.harness.json`; frontier spawns weigh more than fast). Fan-out beyond the budget queues; independent
+tasks run concurrently up to the cap. It also **tracks estimated token consumption inside the
+Claude-Max rolling 5h window** (`record`/`consumed`/`windowPct`, surfaced to observability). Setting
+`HARNESS_WINDOW_TOKENS > 0` turns on a hard window gate — `admit()` also queues once the rolling-window
+budget is exhausted, draining as old usage ages out; the default (`0`) tracks + surfaces only and never
+hangs a session. Token cost is an estimate (~4 chars/token over prompt + output bytes), labelled as
+such — a proxy that beats count-only gating without claiming provider-exact accuracy.
 
 ### A.5 Bounded retry + expertise
 - `max_attempts` (default 1): on a non-`done`/contract-fail result, re-run up to N times, folding the
   prior failure back into the next prompt (shift-feedback-left), then escalate.
 - `context_globs`: files matched relative to the bundle dir are read and folded into the worker's
   prompt as a bounded `## Expertise context` block.
+- **Persistent expertise (#7)** — a bundle with `expertise: true` gets a self-maintained
+  `expertise.md`: the harness reads it into the worker's prompt at boot (newest notes kept) and, on a
+  successful run, appends the worker's optional `## expertise` self-note (`parseExpertiseNote` →
+  `appendExpertiseNote`, deduped + capped). The agent owns the file; lessons compound across runs.
+  Enabled on read-only seeds (`scout`); generated files are git-ignored.
+
+### A.5b Within-run result cache + dedup (#5)
+Identical sub-tasks (same agent + model + tools + prompt + verify, `cacheKey`) collapse to ONE
+execution: concurrent duplicates share one in-flight promise and a completed result is reused for
+later identical calls in the session (`ResultCache`). **Only read-only agents are cacheable**
+(`isCacheable`) — caching a write/edit/bash agent would return its artifact without re-applying its
+side effects, so a side-effecting agent always runs. Cache hits/dedups cost no window tokens. Disable
+with `HARNESS_NO_CACHE=1`.
 
 ### A.6 Transports
 - `"oneshot"` (default) — a cold `pi -p` per task.
@@ -68,6 +94,13 @@ Both apply the identical contract + deterministic-verify gating (single-sourced 
 `spawn_agents` uses an **adaptive default**: same-agent batches of ≥8 tasks auto-use the pool
 (benchmarked ~30–47% faster via reuse across waves; see `bench/`), else oneshot. Override per call.
 
+**Pre-warm (kill the cold-start tax).** `HARNESS_PREWARM=scout,builder` stands up `HARNESS_POOL_SIZE`
+idle `pi --mode rpc` workers per named bundle at session start (`prewarm()`, fire-and-forget, drained
+on shutdown) — Stripe's "hot-and-ready" devbox model at the process level. A pre-warmed bundle is then
+routed to its hot pool at **any** batch size (`pickTransport(..., isPrewarmed(agent))`), since the
+adaptive ≥8 threshold only existed to amortise cold start; `run_team`/`run_blueprint` benefit
+automatically.
+
 ### A.7 Safety (trustable headless)
 - **Deterministic verify** — `verify: "<cmd>"`; the harness runs the acceptance command itself and a
   failure overrides the agent's own claim (`verify_failed`).
@@ -76,21 +109,49 @@ Both apply the identical contract + deterministic-verify gating (single-sourced 
   sibling-prefix safe).
 - **builder→reviewer auto-pairing** — `spawn_agent({ review: true })` runs the reviewer over the git
   diff and **fails closed** unless the reviewer APPROVEs.
+- **Shift-left write validation (#6)** — the worker-side guard runs an EXACT syntax check on the
+  content a `write` is about to commit (`validateContent`: JSON via `JSON.parse`, Python via
+  `py_compile` when available) and **blocks a syntactically broken write** with the parser error fed
+  back to the agent, so it fails fast and locally instead of in a later verify/CI step. Validators are
+  exact-only (zero false positives — never block valid content); unsupported types are skipped.
+- **$0-OAuth canary** (`assertOAuthRouting`) — every spawn path (oneshot + pooled rpc) builds its env
+  through the single-sourced `spawnEnv` (ejects `ANTHROPIC_API_KEY`) and **must** pass the canary
+  before exec: it throws if a key is present (would bill pay-per-token) or the `--system-prompt` is
+  empty (routes to extra usage). This makes “a worker spawn that silently bills” *unrepresentable*,
+  not merely conventional.
 
 ### A.8 Observability, teams, scale
+- **Fleet-level observability (#8)** — two things the per-session widget can't give: (1) a **cross-run
+  ledger** (`src/fleet.ts`) appending every finished spawn (`~/.aurora/harness/fleet.jsonl`) +
+  `aggregateFleet`/`fleetDigest` (cost-per-intelligent-agent-hour, done-rates, cache-hit-rate),
+  rendered to `fleet-summary.md` on shutdown; and (2) a **boot prompt audit** (`auditPrompt`) that
+  renders each worker's system prompt once at load and flags any over the byte threshold — the
+  skill-bloat detector (context that costs tokens every spawn without earning it).
 - **Live TUI dashboard** (`extension/observe.ts` + `src/observe.ts`) — a widget above the editor;
   `/harness-drill <agent|next|off>` expands a per-agent tool timeline; `/harness-web [port] [host]`
   serves an external HTTP+SSE dashboard (`src/web-surface.ts`; loopback by default, optional token
   auth).
 - **Named teams** (`run_team`, `src/teams.ts`) — declarative recipes: sequential stages, parallel
   steps; fail-closed loader; `{{var}}` templating. Teams may invoke only worker agents.
+- **Blueprints** (`run_blueprint`, `src/blueprint.ts`) — a **code-defined DAG** that interleaves
+  deterministic **code nodes** (`run`: a shell command the harness runs itself, non-destructive,
+  guarded) and scoped **agent nodes** (`agent`+`prompt`). Nodes launch the instant their `depends_on`
+  are `done` (continuous wide parallelism, not just stage-locked); a failed/skipped upstream
+  **fail-closes** its dependents. Upstream output flows downstream via `{{node.<id>}}` (you can only
+  read what you depend on — `fillTemplate` fail-closes otherwise). Loader validates fail-closed (unique
+  ids, exactly-one-kind per node, known non-spawn agents, acyclic via Kahn). This is the “put the LLM
+  in contained boxes” primitive: the harness owns the graph + the code nodes; the model runs only
+  inside agent nodes. Global + project-local `.pi/blueprints/`; ships `scout-build-verify`.
 - **Containerised workers** (`src/container-worker.ts`) — a PooledWorker over a real docker container
   for isolation (lifecycle smoke-proven).
 
 ### A.9 Configuration (all optional, env-overridable)
 `HARNESS_HOME` (install root; else derived from `src/paths.ts` via `import.meta.url`),
-`HARNESS_AGENTS_DIR`, `HARNESS_TEAMS_DIR`, `HARNESS_THEMES_DIR`, `PI_CODING_AGENT_DIR`,
-`HARNESS_POOL_SIZE`, `HARNESS_WEB_TOKEN_FILE`. Model ids live in `MODEL` (`src/core.ts`).
+`HARNESS_AGENTS_DIR`, `HARNESS_TEAMS_DIR`, `HARNESS_BLUEPRINTS_DIR`, `HARNESS_THEMES_DIR`,
+`PI_CODING_AGENT_DIR` / `AURORA_CODING_AGENT_DIR` (config home for the registry index, default
+`~/.aurora`), `HARNESS_POOL_SIZE`, `HARNESS_PREWARM` (comma-sep bundle names to pre-warm),
+`HARNESS_WINDOW_TOKENS` (>0 = hard rolling-window gate), `HARNESS_NO_CACHE` (disable the within-run
+result cache), `HARNESS_WEB_TOKEN_FILE`. Model ids live in `MODEL` (`src/core.ts`).
 
 ---
 

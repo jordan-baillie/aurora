@@ -2,25 +2,35 @@
 //   node --experimental-strip-types --test test/core.test.ts
 
 import assert from "node:assert/strict";
-import { mkdirSync, rmSync, writeFileSync as writeFile } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, writeFileSync as writeFile } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import {
 	type AgentBundle,
+	appendExpertiseNote,
+	assertOAuthRouting,
 	buildSystemPrompt,
 	checkContract,
+	estimateTokens,
 	finalizeResult,
 	loadExpertise,
+	loadExpertiseMemory,
 	loadRegistry,
+	parseExpertiseNote,
 	parseVerdict,
+	registryDigest,
+	registryIndex,
 	registryView,
 	reviewDecision,
 	runWithReview,
 	type SpawnResult,
 	SYS_HEADER,
+	spawnEnv,
 	validateBundle,
+	WindowGovernor,
 	withRetry,
+	writeRegistryIndex,
 } from "../src/core.ts";
 
 const base: AgentBundle = {
@@ -431,4 +441,202 @@ test("registryView: sorted ascending, typed rows, contains seed agents", () => {
 	const names = rows.map((r) => r.name);
 	for (const expected of ["builder", "reviewer", "scout"])
 		assert.ok(names.includes(expected), `missing seed agent: ${expected}`);
+});
+
+// ── $0-OAuth canary ────────────────────────────────────────────────────────────
+
+test("spawnEnv ejects ANTHROPIC_API_KEY and sets harness env", () => {
+	const saved = process.env.ANTHROPIC_API_KEY;
+	try {
+		process.env.ANTHROPIC_API_KEY = "sk-should-be-ejected";
+		const env = spawnEnv("/work/repo", [".env", "secrets"]);
+		assert.equal(env.ANTHROPIC_API_KEY, undefined, "key must be ejected to force $0 OAuth");
+		assert.equal(env.HARNESS_ROOT, "/work/repo");
+		assert.equal(env.HARNESS_PROTECTED, ".env:secrets");
+	} finally {
+		if (saved === undefined) delete process.env.ANTHROPIC_API_KEY;
+		else process.env.ANTHROPIC_API_KEY = saved;
+	}
+});
+
+test("assertOAuthRouting throws when a key would bill or the system prompt is empty", () => {
+	assert.throws(() => assertOAuthRouting({ ANTHROPIC_API_KEY: "sk-x" }, SYS_HEADER), /ANTHROPIC_API_KEY present/);
+	assert.throws(() => assertOAuthRouting({}, ""), /empty --system-prompt/);
+	assert.throws(() => assertOAuthRouting({}, "   "), /empty --system-prompt/);
+	assert.doesNotThrow(() => assertOAuthRouting({}, SYS_HEADER));
+});
+
+// ── window-aware governor ──────────────────────────────────────────────────────
+
+test("estimateTokens approximates ~4 chars/token and never goes negative", () => {
+	assert.equal(estimateTokens(0), 0);
+	assert.equal(estimateTokens(-5), 0);
+	assert.equal(estimateTokens(4), 1);
+	assert.equal(estimateTokens(5), 2);
+});
+
+test("WindowGovernor.admit caps simultaneous WEIGHT and releases", async () => {
+	const gov = new WindowGovernor({ maxWeight: 4 });
+	const fast: AgentBundle = { ...base, model_tier: "fast" }; // weight 1
+	const frontier: AgentBundle = { ...base, model_tier: "frontier" }; // weight 4
+	// frontier fills the whole budget; a concurrent fast admit must block until release.
+	const relFrontier = await gov.admit(frontier);
+	assert.equal(gov.loadPct(), 100);
+	let admitted = false;
+	const pending = gov.admit(fast).then((r) => {
+		admitted = true;
+		return r;
+	});
+	await new Promise((r) => setTimeout(r, 250));
+	assert.equal(admitted, false, "fast admit must queue while the frontier holds the full budget");
+	relFrontier();
+	const relFast = await pending;
+	assert.equal(admitted, true);
+	relFast();
+	assert.equal(gov.loadPct(), 0);
+});
+
+test("WindowGovernor tracks token consumption inside the rolling window and prunes old usage", () => {
+	const gov = new WindowGovernor({ budgetTokens: 1000, windowMs: 1000 });
+	const now = 10_000;
+	gov.record(400, now);
+	assert.equal(gov.consumed(now), 400);
+	assert.equal(gov.windowPct(now), 40);
+	// usage older than windowMs ages out
+	gov.record(600, now);
+	assert.equal(gov.windowPct(now), 100);
+	assert.equal(gov.consumed(now + 2000), 0, "all usage should have aged out of the window");
+	assert.equal(gov.windowPct(now + 2000), 0);
+});
+
+test("WindowGovernor with no budget reports 0% (tracking only, never hard-gates)", () => {
+	const gov = new WindowGovernor({ maxWeight: 8 });
+	gov.record(1_000_000);
+	assert.equal(gov.windowPct(), 0, "no budget => no window gate, surfaced as 0%");
+});
+
+test("WindowGovernor hard-gates admit when the token budget is exhausted", async () => {
+	const gov = new WindowGovernor({ maxWeight: 8, budgetTokens: 100, windowMs: 60_000 });
+	gov.record(100); // exhaust the window budget
+	let admitted = false;
+	gov.admit({ ...base, model_tier: "fast" }).then(() => {
+		admitted = true;
+	});
+	await new Promise((r) => setTimeout(r, 250));
+	assert.equal(admitted, false, "admit must queue while the window budget is exhausted");
+});
+
+// ── registry index + digest ─────────────────────────────────────────────────────
+
+function indexReg(): Map<string, AgentBundle> {
+	return new Map<string, AgentBundle>([
+		[
+			"scout",
+			{
+				name: "scout",
+				role: "recon",
+				model_tier: "fast",
+				tools: ["read", "grep"],
+				output_contract: { required_sections: ["## findings"] },
+			},
+		],
+		[
+			"builder",
+			{
+				name: "builder",
+				role: "implement",
+				model_tier: "standard",
+				tools: ["read", "edit"],
+				output_contract: { required_sections: ["## change-summary"] },
+			},
+		],
+		[
+			"orchestrator",
+			{
+				name: "orchestrator",
+				role: "delegate",
+				model_tier: "frontier",
+				tools: ["spawn_agent"],
+				may_spawn: true,
+				output_contract: { required_sections: ["## delegated"] },
+			},
+		],
+	]);
+}
+
+test("registryIndex is sorted, content-hashed, and includes role", () => {
+	const idx = registryIndex(indexReg());
+	assert.equal(idx.count, 3);
+	assert.deepEqual(
+		idx.agents.map((a) => a.name),
+		["builder", "orchestrator", "scout"],
+	);
+	assert.equal(idx.agents.find((a) => a.name === "scout")!.role, "recon");
+	assert.match(idx.hash, /^[0-9a-f]{16}$/);
+	// hash is stable across calls (content-addressed; does not include generated_at)
+	assert.equal(registryIndex(indexReg()).hash, idx.hash);
+});
+
+test("registryDigest is compact and can exclude the orchestrator", () => {
+	const d = registryDigest(indexReg(), { exclude: ["orchestrator"] });
+	assert.ok(!d.includes("orchestrator"), "orchestrator excluded");
+	assert.ok(d.includes("scout[fast; tools:read/grep; ->## findings]"), `digest shape: ${d}`);
+	assert.ok(d.includes("builder[standard;"), `digest has builder: ${d}`);
+});
+
+// ── persistent expertise (#7) ─────────────────────────────────────────────────────
+
+test("parseExpertiseNote extracts the ## expertise section (or empty)", () => {
+	assert.equal(parseExpertiseNote("## findings\nx\n## expertise\n- lesson A\n- lesson B"), "- lesson A\n- lesson B");
+	assert.equal(parseExpertiseNote("## findings\nno note here"), "");
+});
+
+test("appendExpertiseNote creates the file, dedups, and caps entries", () => {
+	const dir = join(tmpdir(), `harness-exp-${Date.now()}`);
+	mkdirSync(dir, { recursive: true });
+	const b: AgentBundle = { ...base, name: "scout", expertise: true, _dir: dir };
+	try {
+		assert.equal(appendExpertiseNote(b, "lesson one"), true, "first note writes");
+		assert.equal(appendExpertiseNote(b, "lesson one"), false, "identical note is deduped");
+		assert.equal(appendExpertiseNote(b, ""), false, "empty note is ignored");
+		assert.equal(appendExpertiseNote(b, "lesson two"), true);
+		// cap to last 1 entry => only the newest survives
+		appendExpertiseNote(b, "lesson three", { maxEntries: 1 });
+		const body = readFileSync(join(dir, "expertise.md"), "utf8");
+		assert.ok(body.includes("lesson three"), "newest kept");
+		assert.ok(!body.includes("lesson one"), "oldest capped out");
+		// memory loads back into the prompt only when expertise is enabled
+		assert.ok(loadExpertiseMemory(b).includes("Prior expertise"));
+		assert.equal(loadExpertiseMemory({ ...b, expertise: false }), "", "disabled => no memory injected");
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+test("buildSystemPrompt invites a ## expertise note only when the bundle opts in", () => {
+	const off = buildSystemPrompt({ ...base, expertise: false });
+	assert.ok(!off.includes("## expertise"));
+	const on = buildSystemPrompt({ ...base, expertise: true });
+	assert.ok(on.includes("## expertise"), "opt-in bundles get the expertise instruction");
+});
+
+test("writeRegistryIndex writes once and is idempotent by content hash", () => {
+	const dir = join(tmpdir(), `harness-idx-${Date.now()}`);
+	mkdirSync(dir, { recursive: true });
+	const path = join(dir, "nested", "registry-index.json");
+	try {
+		const first = writeRegistryIndex(indexReg(), path);
+		assert.equal(first.written, true, "first write happens");
+		const onDisk = JSON.parse(readFileSync(path, "utf8"));
+		assert.equal(onDisk.count, 3);
+		assert.equal(onDisk.hash, first.hash);
+		// same content => no rewrite
+		assert.equal(writeRegistryIndex(indexReg(), path).written, false, "unchanged registry must not rewrite");
+		// changed registry => rewrite
+		const reg2 = indexReg();
+		reg2.delete("scout");
+		assert.equal(writeRegistryIndex(reg2, path).written, true, "changed registry must rewrite");
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
 });

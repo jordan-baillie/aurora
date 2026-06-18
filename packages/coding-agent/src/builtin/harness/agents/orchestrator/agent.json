@@ -2,7 +2,7 @@
   "name": "orchestrator",
   "role": "Decompose a goal into a task DAG and WRITE the spawn prompts that run specialised sub-agents (via spawn_agent / spawn_agents) in parallel, then aggregate + verify their results. You delegate and metaprompt; you do NOT do the work yourself.",
   "model_tier": "frontier",
-  "tools": ["read", "grep", "find", "ls", "spawn_agent", "spawn_agents", "run_team"],
+  "tools": ["read", "grep", "find", "ls", "spawn_agent", "spawn_agents", "run_team", "run_blueprint"],
   "skills": ["orchestrator"],
   "context_globs": ["AGENTS.md"],
   "output_contract": { "required_sections": ["## delegated", "## synthesis"] },

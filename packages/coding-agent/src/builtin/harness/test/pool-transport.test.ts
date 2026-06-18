@@ -5,7 +5,14 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { AgentBundle } from "../src/core.ts";
-import { _poolCount, drainAllPools, POOL_MIN_BATCH, pickTransport, poolFor } from "../src/pool-transport.ts";
+import {
+	_poolCount,
+	drainAllPools,
+	isPrewarmed,
+	POOL_MIN_BATCH,
+	pickTransport,
+	poolFor,
+} from "../src/pool-transport.ts";
 
 // Minimal valid bundles — only fields required by AgentBundle.
 const b1: AgentBundle = {
@@ -60,6 +67,19 @@ test("pickTransport: sameBundleCount at/above threshold → pool", () => {
 test("pickTransport: override wins regardless of count", () => {
 	assert.strictEqual(pickTransport(1, "pool"), "pool");
 	assert.strictEqual(pickTransport(50, "oneshot"), "oneshot");
+});
+
+test("pickTransport: a pre-warmed bundle routes to the pool at ANY batch size", () => {
+	assert.strictEqual(pickTransport(1, undefined, true), "pool", "pre-warmed single task uses the hot pool");
+	assert.strictEqual(pickTransport(4, undefined, true), "pool");
+	// explicit override still wins over the pre-warm preference
+	assert.strictEqual(pickTransport(1, "oneshot", true), "oneshot");
+	// not pre-warmed + below threshold => oneshot (unchanged behaviour)
+	assert.strictEqual(pickTransport(1, undefined, false), "oneshot");
+});
+
+test("isPrewarmed defaults to false for an un-warmed bundle", () => {
+	assert.strictEqual(isPrewarmed("never-warmed"), false);
 });
 
 test("POOL_MIN_BATCH calibration constant is 8", () => {

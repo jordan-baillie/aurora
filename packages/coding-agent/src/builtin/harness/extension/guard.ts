@@ -3,6 +3,7 @@
 // paths or outside the project root. Reads its policy from env set by core.spawnAgent.
 import type { ExtensionAPI } from "../../../index.ts";
 import { escapesRoot, hitsProtected, isDestructiveCmd } from "../src/core.ts";
+import { validateContent } from "../src/validate.ts";
 
 const ROOT = process.env.HARNESS_ROOT || process.cwd();
 const PROTECTED = (process.env.HARNESS_PROTECTED || "").split(":").filter(Boolean);
@@ -26,6 +27,17 @@ export default function guard(pi: ExtensionAPI) {
 				return { block: true, reason: `harness-guard: write to protected path blocked — ${path}` };
 			if (path && escapesRoot(path, ROOT))
 				return { block: true, reason: `harness-guard: write outside project root blocked — ${path}` };
+			// Shift-feedback-left (#6): reject a syntactically broken full-content write at the tool layer,
+			// surfacing the exact parser error so the agent fixes it now (not in a later verify/CI step).
+			const content = input.content;
+			if (name === "write" && path && typeof content === "string") {
+				const v = validateContent(path, content);
+				if (!v.ok)
+					return {
+						block: true,
+						reason: `harness-guard: ${v.checker} syntax error in ${path} — ${v.error ?? "invalid"}`,
+					};
+			}
 		}
 	});
 }
