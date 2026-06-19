@@ -5,7 +5,7 @@ See [AGENTS.md](../../../AGENTS.md) for additional guidelines.
 ## Setup
 
 ```bash
-git clone https://github.com/jordan-245/aurora.git summon
+git clone https://github.com/jordan-baillie/aurora.git summon
 cd summon
 npm install
 npm run build

@@ -9,8 +9,9 @@ import { CONFIG_DIR_NAME, getAgentDir, getBinDir } from "./config.ts";
 import { migrateKeybindingsConfig } from "./core/keybindings.ts";
 
 const MIGRATION_GUIDE_URL =
-	"https://github.com/jordan-245/aurora/blob/main/packages/coding-agent/CHANGELOG.md#extensions-migration";
-const EXTENSIONS_DOC_URL = "https://github.com/jordan-245/aurora/blob/main/packages/coding-agent/docs/extensions.md";
+	"https://github.com/jordan-baillie/aurora/blob/main/packages/coding-agent/CHANGELOG.md#extensions-migration";
+const EXTENSIONS_DOC_URL =
+	"https://github.com/jordan-baillie/aurora/blob/main/packages/coding-agent/docs/extensions.md";
 
 /**
  * Migrate legacy oauth.json and settings.json apiKeys to auth.json.
@@ -78,7 +79,7 @@ export function migrateAuthToAuthJson(): string[] {
  * ~/.summon/agent/sessions/<encoded-cwd>/. This migration moves them
  * to the correct location based on the cwd in their session header.
  *
- * See: https://github.com/jordan-245/aurora/issues/320
+ * See: https://github.com/jordan-baillie/aurora/issues/320
  */
 export function migrateSessionsFromAgentRoot(): void {
 	const agentDir = getAgentDir();

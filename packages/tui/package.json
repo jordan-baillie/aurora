@@ -29,7 +29,7 @@
 	"license": "MIT",
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/jordan-245/aurora.git",
+		"url": "git+https://github.com/jordan-baillie/aurora.git",
 		"directory": "packages/tui"
 	},
 	"engines": {

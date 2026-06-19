@@ -144,7 +144,7 @@ function getAttributionHeaders(
 
 	if (model.provider === "openrouter" || model.baseUrl.includes("openrouter.ai")) {
 		return {
-			"HTTP-Referer": "https://github.com/jordan-245/aurora",
+			"HTTP-Referer": "https://github.com/jordan-baillie/aurora",
 			"X-OpenRouter-Title": "summon",
 			"X-OpenRouter-Categories": "cli-agent",
 		};

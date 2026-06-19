@@ -28,11 +28,11 @@ Existing sessions are automatically migrated to the current version (v3) when lo
 
 ## Source Files
 
-Source on GitHub ([aurora](https://github.com/jordan-245/aurora)):
-- [`packages/coding-agent/src/core/session-manager.ts`](https://github.com/jordan-245/aurora/blob/main/packages/coding-agent/src/core/session-manager.ts) - Session entry types and SessionManager
-- [`packages/coding-agent/src/core/messages.ts`](https://github.com/jordan-245/aurora/blob/main/packages/coding-agent/src/core/messages.ts) - Extended message types (BashExecutionMessage, CustomMessage, etc.)
-- [`packages/ai/src/types.ts`](https://github.com/jordan-245/aurora/blob/main/packages/ai/src/types.ts) - Base message types (UserMessage, AssistantMessage, ToolResultMessage)
-- [`packages/agent/src/types.ts`](https://github.com/jordan-245/aurora/blob/main/packages/agent/src/types.ts) - AgentMessage union type
+Source on GitHub ([aurora](https://github.com/jordan-baillie/aurora)):
+- [`packages/coding-agent/src/core/session-manager.ts`](https://github.com/jordan-baillie/aurora/blob/main/packages/coding-agent/src/core/session-manager.ts) - Session entry types and SessionManager
+- [`packages/coding-agent/src/core/messages.ts`](https://github.com/jordan-baillie/aurora/blob/main/packages/coding-agent/src/core/messages.ts) - Extended message types (BashExecutionMessage, CustomMessage, etc.)
+- [`packages/ai/src/types.ts`](https://github.com/jordan-baillie/aurora/blob/main/packages/ai/src/types.ts) - Base message types (UserMessage, AssistantMessage, ToolResultMessage)
+- [`packages/agent/src/types.ts`](https://github.com/jordan-baillie/aurora/blob/main/packages/agent/src/types.ts) - AgentMessage union type
 
 For TypeScript definitions in your project, inspect `node_modules/@summon/coding-agent/dist/` and `node_modules/@summon/ai/dist/`.
 
