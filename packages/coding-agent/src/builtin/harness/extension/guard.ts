@@ -6,7 +6,19 @@ import { escapesRoot, hitsProtected, isDestructiveCmd } from "../src/core.ts";
 import { validateContent } from "../src/validate.ts";
 
 const ROOT = process.env.HARNESS_ROOT || process.cwd();
-const PROTECTED = (process.env.HARNESS_PROTECTED || "").split(":").filter(Boolean);
+
+// HARNESS_PROTECTED is JSON-encoded by core.spawnEnv (so colon-bearing Windows paths survive); fall back
+// to the legacy ":"-joined form for forward-compat with an older spawner.
+function parseProtected(raw: string | undefined): string[] {
+	if (!raw) return [];
+	try {
+		const v = JSON.parse(raw);
+		return Array.isArray(v) ? v.filter((x: unknown): x is string => typeof x === "string") : [];
+	} catch {
+		return raw.split(":").filter(Boolean);
+	}
+}
+const PROTECTED = parseProtected(process.env.HARNESS_PROTECTED);
 
 export default function guard(pi: ExtensionAPI) {
 	pi.on("tool_call", async (event: any) => {

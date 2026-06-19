@@ -103,7 +103,7 @@ export function aggregateFleet(entries: FleetEntry[]): FleetAggregate {
 
 export function fleetDigest(agg: FleetAggregate): string {
 	const L: string[] = [];
-	L.push("# Aurora harness — fleet summary");
+	L.push("# Summon harness — fleet summary");
 	L.push("");
 	L.push(
 		`total spawns: ${agg.total} · done-rate: ${(agg.done_rate * 100).toFixed(0)}% · agent-hours: ${agg.agent_hours} · est-tokens: ${agg.est_tokens} · cache-hit-rate: ${(agg.cache_hit_rate * 100).toFixed(0)}%`,

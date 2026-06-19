@@ -1,4 +1,4 @@
-import type { Component } from "@earendil-works/pi-tui";
+import type { Component } from "@summon/tui";
 
 /**
  * A Component whose lines are produced by a function on every render.

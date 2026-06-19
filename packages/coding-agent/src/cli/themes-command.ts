@@ -198,7 +198,7 @@ export async function runThemesCommand(args: string[]): Promise<void> {
 	}
 
 	// Footer hint
-	const currentTheme = settingsManager.getTheme() ?? "aurora";
+	const currentTheme = settingsManager.getTheme() ?? "summon";
 	console.log(chalk.dim(`Current theme: ${currentTheme}`));
 	console.log(chalk.dim(`To switch: ${APP_NAME} themes <name>  (e.g. ${APP_NAME} themes editorial)`));
 	console.log();

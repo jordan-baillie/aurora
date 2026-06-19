@@ -6,7 +6,7 @@ import {
 	type MarkdownTheme,
 	type SelectListTheme,
 	type SettingsListTheme,
-} from "@earendil-works/pi-tui";
+} from "@summon/tui";
 import chalk from "chalk";
 import { type Static, Type } from "typebox";
 import { Compile } from "typebox/compile";
@@ -193,7 +193,7 @@ export type InputAreaStyle = "border-fill" | "rules-only";
 export type RoleStyle = "none" | "smallcaps" | "bracket";
 /** Style variants for the footer row. */
 export type FooterStyle = "two-line" | "single-line";
-/** Working-loader spinner: `dots` = single breathing glyph; `wave` = aurora ribbon. */
+/** Working-loader spinner: `dots` = single breathing glyph; `wave` = summon ribbon. */
 export type SpinnerStyle = "dots" | "wave";
 export type BannerAnimation = "none" | "comet";
 
@@ -834,10 +834,10 @@ export class Theme {
 	}
 
 	/**
-	 * Aurora "wave-ribbon" working spinner: a single smooth, symmetric crest of light
+	 * Summon "wave-ribbon" working spinner: a single smooth, symmetric crest of light
 	 * (a raised-cosine swell of block glyphs ▁▂▃▄▅▆▇█) that glides across the ribbon
 	 * and wraps seamlessly, while the gradient colours travel through it with a per-frame
-	 * phase offset — so both the swell AND the colours flow like the aurora borealis. The
+	 * phase offset — so both the swell AND the colours flow like the summon borealis. The
 	 * crest is unimodal every frame (one clean wave, never a busy multi-bump equalizer) and
 	 * every frame has identical visible width (correct-by-construction — no hand-authored
 	 * frames that could drift off-width and jitter the loader). Returns undefined
@@ -845,7 +845,7 @@ export class Theme {
 	 * so non-premium themes fall through to the breathing/flat spinner. Pure +
 	 * deterministic (frames built once at theme load).
 	 */
-	auroraSpinnerFrames(): string[] | undefined {
+	summonSpinnerFrames(): string[] | undefined {
 		if (this.resolvedLayout.spinnerStyle !== "wave") return undefined;
 		const ramp = this.resolvedGradient;
 		if (!ramp || ramp.length === 0) return undefined;
@@ -860,7 +860,7 @@ export class Theme {
 			for (let x = 0; x < width; x++) {
 				// height: ONE smooth, symmetric crest of light sweeping across the ribbon. A raised
 				// cosine on a ring (peak at `phase`, `dist` = wrap-around distance from it in [0, 0.5])
-				// → a single clean aurora swell with an even falloff on both sides — never a busy,
+				// → a single clean summon swell with an even falloff on both sides — never a busy,
 				// multi-bump equalizer. Correct-by-construction: the crest is unimodal every frame.
 				const dist = Math.abs(((((x / width - phase + 0.5) % 1) + 1) % 1) - 0.5);
 				const norm = Math.cos(dist * Math.PI) ** 2; // 1 at the crest → 0 half a ring away
@@ -885,7 +885,7 @@ export class Theme {
 	}
 
 	/**
-	 * Aurora "comet" banner ("Comet Glint"): a CONTINUOUS, seamless-looping animation of the neon-tube
+	 * Summon "comet" banner ("Comet Glint"): a CONTINUOUS, seamless-looping animation of the neon-tube
 	 * wordmark where (a) the signature gradient drifts boldly through the tubes (a whole number of
 	 * cyclic passes per loop — clearly visible hue motion) with soft light bands gliding around each
 	 * letter, and (b) a bright white glint sweeps left→right through the word every loop, shedding a
@@ -896,7 +896,7 @@ export class Theme {
 	 * is reproducible). Returns undefined unless the theme opts in (`layout.bannerAnimation: "comet"`)
 	 * AND a gradient + banner exist AND the wordmark is separable into letters by blank columns.
 	 */
-	auroraBannerCometFrames(): string[] | undefined {
+	summonBannerCometFrames(): string[] | undefined {
 		if (this.resolvedLayout.bannerAnimation !== "comet") return undefined;
 		const banner = this.resolvedBanner;
 		const ramp = this.resolvedGradient;
@@ -1030,7 +1030,7 @@ export class Theme {
 		return frames;
 	}
 
-	/** Frame interval (ms) for the continuous aurora comet banner. */
+	/** Frame interval (ms) for the continuous summon comet banner. */
 	bannerCometIntervalMs(): number {
 		return 75;
 	}
@@ -1050,7 +1050,7 @@ function getBuiltinThemes(): Record<string, ThemeJson> {
 			light: JSON.parse(fs.readFileSync(path.join(themesDir, "light.json"), "utf-8")) as ThemeJson,
 		};
 		// Phase 1: load new built-in themes when present (bundled with the package)
-		for (const name of ["editorial", "brutalist", "aurora", "harness"]) {
+		for (const name of ["editorial", "brutalist", "summon", "harness"]) {
 			const p = path.join(themesDir, `${name}.json`);
 			if (fs.existsSync(p)) {
 				BUILTIN_THEMES[name] = JSON.parse(fs.readFileSync(p, "utf-8")) as ThemeJson;
@@ -1414,9 +1414,9 @@ export function detectTerminalBackground(options: TerminalThemeDetectionOptions 
 }
 
 export function getDefaultTheme(): string {
-	// Aurora is the product's signature look — the full neon TUI out of the box.
-	// Switch anytime via `aurora themes <name>` (e.g. editorial, dark, light).
-	return "aurora";
+	// Summon is the product's signature look — the full neon TUI out of the box.
+	// Switch anytime via `summon themes <name>` (e.g. editorial, dark, light).
+	return "summon";
 }
 
 // ============================================================================
@@ -1424,8 +1424,8 @@ export function getDefaultTheme(): string {
 // ============================================================================
 
 // Use globalThis to share theme across module loaders (tsx + jiti in dev mode)
-const THEME_KEY = Symbol.for("@earendil-works/pi-coding-agent:theme");
-const THEME_KEY_OLD = Symbol.for("@mariozechner/pi-coding-agent:theme");
+const THEME_KEY = Symbol.for("@summon/coding-agent:theme");
+const THEME_KEY_OLD = Symbol.for("@summon/coding-agent:theme");
 
 // Export theme as a getter that reads from globalThis
 // This ensures all module instances (tsx, jiti) see the same theme

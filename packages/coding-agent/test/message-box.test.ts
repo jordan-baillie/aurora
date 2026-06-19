@@ -1,7 +1,7 @@
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Container, Text, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { Container, Text, truncateToWidth, visibleWidth } from "@summon/tui";
 import { afterEach, describe, expect, test } from "vitest";
 import { AssistantMessageComponent } from "../src/modes/interactive/components/assistant-message.ts";
 import { MessageBoxFrame } from "../src/modes/interactive/components/box-frame.ts";
@@ -11,7 +11,7 @@ import { initTheme, loadThemeFromPath, setThemeInstance } from "../src/modes/int
 import { stripAnsi } from "../src/utils/ansi.ts";
 
 // ============================================================================
-// messageStyle: "box" — bordered chat messages (aurora)
+// messageStyle: "box" — bordered chat messages (summon)
 //
 // Guards the off-by-one box-padding bug CLASS: every framed line MUST be exactly
 // the requested width, on both the rounded (╭╮╰╯) and the portable +/-/| glyph
@@ -27,7 +27,7 @@ function useTheme(extra: Record<string, unknown>): void {
 	const merged = {
 		...base,
 		name: "test-box",
-		layout: { ...(base.layout ?? {}), userRoleLabel: "you", assistantRoleLabel: "aurora", ...(extra.layout ?? {}) },
+		layout: { ...(base.layout ?? {}), userRoleLabel: "you", assistantRoleLabel: "summon", ...(extra.layout ?? {}) },
 		glyphs: { ...(base.glyphs ?? {}), ...(extra.glyphs ?? {}) },
 	};
 	const dir = mkdtempSync(join(tmpdir(), "msg-box-"));
@@ -73,11 +73,11 @@ describe("MessageBoxFrame", () => {
 		];
 		const card = new MessageBoxFrame(
 			new FunctionalLines((innerWidth) => longBody.map((l) => (l === "" ? "" : truncateToWidth(l, innerWidth)))),
-			{ label: "AURORA", borderColor: "border", labelColor: "accent" },
+			{ label: "SUMMON", borderColor: "border", labelColor: "accent" },
 		);
 		for (const width of [40, 60, 80, 120]) {
 			const lines = card.render(width).map(stripAnsi);
-			expect(lines[0].startsWith("╭── AURORA ")).toBe(true);
+			expect(lines[0].startsWith("╭── SUMMON ")).toBe(true);
 			expect(lines[0].endsWith("╮")).toBe(true);
 			expect(lines[lines.length - 1]).toMatch(/^╰─+╯$/);
 			for (const l of lines) expect(visibleWidth(l)).toBe(width);
@@ -113,7 +113,7 @@ describe("MessageBoxFrame", () => {
 		}
 	});
 
-	test("AssistantMessageComponent renders a box with the AURORA label", () => {
+	test("AssistantMessageComponent renders a box with the SUMMON label", () => {
 		useTheme({ layout: { messageStyle: "box" }, glyphs: ROUNDED_GLYPHS });
 		const component = new AssistantMessageComponent();
 		component.updateContent({
@@ -123,7 +123,7 @@ describe("MessageBoxFrame", () => {
 		} as never);
 		const rendered = component.render(50).map(stripAnsi);
 		const joined = rendered.join("\n");
-		expect(joined).toContain("╭── AURORA ");
+		expect(joined).toContain("╭── SUMMON ");
 		expect(joined).toContain("the answer");
 		for (const l of rendered) {
 			if (l.includes("╭") || l.includes("│") || l.includes("╰")) expect(visibleWidth(l)).toBe(50);

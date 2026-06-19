@@ -8,7 +8,7 @@ import {
 	Text,
 	type TUI,
 	visibleWidth,
-} from "@earendil-works/pi-tui";
+} from "@summon/tui";
 import type { ToolDefinition, ToolRenderContext } from "../../../core/extensions/types.ts";
 import { createAllToolDefinitions, type ToolName } from "../../../core/tools/index.ts";
 import { getTextOutput as getRenderedTextOutput } from "../../../core/tools/render-utils.ts";

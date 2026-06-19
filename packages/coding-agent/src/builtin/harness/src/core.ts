@@ -1,11 +1,11 @@
 // Harness v2 — core (registry · validator · contract · spawn). No pi/typebox deps so it runs
 // standalone under `node --experimental-strip-types`. The Pi extension wraps this; single-sourced.
 
-import { spawn, spawnSync } from "node:child_process";
+import { type SpawnSyncReturns, spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
-import { AGENT_BIN, AGENTS_DIR as GLOBAL_AGENTS } from "./paths.ts"; // derived from install location, env-overridable
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { agentSpawnCommand, AGENTS_DIR as GLOBAL_AGENTS } from "./paths.ts"; // derived from install location, env-overridable
 
 export interface OutputContract {
 	required_sections: string[];
@@ -74,7 +74,7 @@ export function loadRegistries(cwd = process.cwd()): {
 	const { root, cfg } = resolveProject(cwd);
 	const protectedList = [...DEFAULT_PROTECTED, ...(cfg.protected ?? [])];
 	const reg = new Map<string, AgentBundle>();
-	const localDir = join(root, cfg.agents_dir ?? ".pi/agents");
+	const localDir = join(root, cfg.agents_dir ?? ".summon/agents");
 	for (const d of [GLOBAL_AGENTS, localDir]) {
 		// local overrides global by name
 		if (!existsSync(d)) continue;
@@ -224,13 +224,40 @@ export function hitsProtected(s: string, protectedList: string[]): boolean {
 	return protectedList.some((p) => p && s.includes(p));
 }
 export function escapesRoot(target: string, root: string): boolean {
+	// Separator-agnostic so it is correct on Windows (backslash) and POSIX. `relative` yields a path that
+	// starts with ".." (or is absolute / on another drive) exactly when `target` lands outside `root` —
+	// and is sibling-prefix safe (/work/repo vs /work/repo-x → "../repo-x", flagged).
 	const r = resolve(root);
 	const abs = resolve(r, target);
-	return abs !== r && !abs.startsWith(`${r}/`); // sibling-prefix safe (/work/repo vs /work/repo-x)
+	if (abs === r) return false;
+	const rel = relative(r, abs);
+	return rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel);
 }
 // Resolve to the built .js in a dist install, else the .ts source in dev (node --experimental-strip-types).
 const _guardBase = join(import.meta.dirname, "..", "extension", "guard");
 export const GUARD_EXT = existsSync(`${_guardBase}.js`) ? `${_guardBase}.js` : `${_guardBase}.ts`;
+
+// Run a deterministic verify command cross-platform. Prefers `bash -c` (POSIX semantics — pipes, &&,
+// quoting — and the same shell the engine's bash tool uses, Git Bash on Windows); falls back to the
+// native command processor only if bash is not installed, so a stock Windows box still runs simple
+// verify commands like `npm test`.
+function runVerifyShell(cmd: string, cwd: string): { status: number | null; stdout: string; stderr: string } {
+	const attempts: Array<[string, string[]]> =
+		process.platform === "win32"
+			? [
+					["bash", ["-c", cmd]],
+					[process.env.ComSpec ?? "cmd.exe", ["/d", "/s", "/c", cmd]],
+				]
+			: [["bash", ["-c", cmd]]];
+	let last: SpawnSyncReturns<string> | undefined;
+	for (const [shell, args] of attempts) {
+		const v = spawnSync(shell, args, { cwd, encoding: "utf8", timeout: 180000 });
+		const enoent = v.error && (v.error as NodeJS.ErrnoException).code === "ENOENT";
+		if (!enoent) return { status: v.status, stdout: v.stdout ?? "", stderr: v.stderr ?? "" };
+		last = v;
+	}
+	return { status: last?.status ?? 1, stdout: last?.stdout ?? "", stderr: last?.stderr ?? "bash not found" };
+}
 
 // ── $0-OAuth canary ───────────────────────────────────────────────────────────
 // Make "a worker spawn that silently bills pay-per-token" UNREPRESENTABLE. Every spawn path
@@ -242,7 +269,9 @@ export function spawnEnv(root?: string, protectedList?: string[]): NodeJS.Proces
 	const env = { ...process.env };
 	delete (env as { ANTHROPIC_API_KEY?: string }).ANTHROPIC_API_KEY; // force $0 OAuth — never bill a key
 	env.HARNESS_ROOT = root ?? process.cwd();
-	env.HARNESS_PROTECTED = (protectedList ?? DEFAULT_PROTECTED).join(":");
+	// JSON-encoded (not ":"-joined) so protected entries containing a colon — e.g. an absolute Windows
+	// path like "C:\\repo\\secrets" — survive the round-trip to the worker-side guard intact.
+	env.HARNESS_PROTECTED = JSON.stringify(protectedList ?? DEFAULT_PROTECTED);
 	return env;
 }
 export function assertOAuthRouting(env: NodeJS.ProcessEnv, sysPrompt: string): void {
@@ -490,11 +519,7 @@ export function finalizeResult(
 			verify = { cmd: opts.verify, passed: false, output: "blocked: destructive verify command" };
 			status = "verify_failed";
 		} else {
-			const v = spawnSync("bash", ["-c", opts.verify], {
-				cwd: opts.root ?? process.cwd(),
-				encoding: "utf8",
-				timeout: 180000,
-			});
+			const v = runVerifyShell(opts.verify, opts.root ?? process.cwd());
 			const passed = v.status === 0;
 			verify = { cmd: opts.verify, passed, output: ((v.stdout ?? "") + (v.stderr ?? "")).slice(-1200) };
 			if (!passed) status = "verify_failed";
@@ -569,7 +594,8 @@ export function spawnOnce(
 	assertOAuthRouting(env, sys); // $0-OAuth canary: fail-closed before we spawn anything
 	const t0 = Date.now();
 	return new Promise((resolve) => {
-		const child = spawn(AGENT_BIN, args, { env });
+		const { cmd, prefix } = agentSpawnCommand();
+		const child = spawn(cmd, [...prefix, ...args], { env });
 		let text = "",
 			buf = "";
 		const killer = setTimeout(() => child.kill("SIGKILL"), (bundle.timeout_s ?? 600) * 1000);

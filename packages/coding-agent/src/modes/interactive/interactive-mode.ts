@@ -7,7 +7,7 @@ import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import type { AgentMessage } from "@summon/agent-core";
 import {
 	type AssistantMessage,
 	getProviders,
@@ -16,7 +16,7 @@ import {
 	type Model,
 	type OAuthProviderId,
 	type OAuthSelectPrompt,
-} from "@earendil-works/pi-ai";
+} from "@summon/ai";
 import type {
 	AutocompleteItem,
 	AutocompleteProvider,
@@ -27,7 +27,7 @@ import type {
 	OverlayHandle,
 	OverlayOptions,
 	SlashCommand,
-} from "@earendil-works/pi-tui";
+} from "@summon/tui";
 import {
 	CombinedAutocompleteProvider,
 	type Component,
@@ -47,7 +47,7 @@ import {
 	TUI,
 	truncateToWidth,
 	visibleWidth,
-} from "@earendil-works/pi-tui";
+} from "@summon/tui";
 import { spawn, spawnSync } from "child_process";
 import {
 	APP_NAME,
@@ -90,8 +90,8 @@ import { copyToClipboard } from "../../utils/clipboard.ts";
 import { extensionForImageMimeType, readClipboardImage } from "../../utils/clipboard-image.ts";
 import { parseGitUrl } from "../../utils/git.ts";
 import { getCwdRelativePath } from "../../utils/paths.ts";
-import { getPiUserAgent } from "../../utils/pi-user-agent.ts";
 import { killTrackedDetachedChildren } from "../../utils/shell.ts";
+import { getSummonUserAgent } from "../../utils/summon-user-agent.ts";
 import { ensureTool } from "../../utils/tools-manager.ts";
 import { checkForNewPiVersion, type LatestPiRelease } from "../../utils/version-check.ts";
 import { ArminComponent } from "./components/armin.ts";
@@ -107,7 +107,6 @@ import { CustomEditor } from "./components/custom-editor.ts";
 import { CustomMessageComponent } from "./components/custom-message.ts";
 import { DaxnutsComponent } from "./components/daxnuts.ts";
 import { DynamicBorder } from "./components/dynamic-border.ts";
-import { EarendilAnnouncementComponent } from "./components/earendil-announcement.ts";
 import { ExtensionEditorComponent } from "./components/extension-editor.ts";
 import { ExtensionInputComponent } from "./components/extension-input.ts";
 import { ExtensionSelectorComponent } from "./components/extension-selector.ts";
@@ -354,7 +353,7 @@ export class InteractiveMode {
 
 	// Built-in header (logo + keybinding hints + changelog)
 	private builtInHeader: Component | undefined = undefined;
-	/** Continuous animated banner (premium themes only, e.g. aurora comet); undefined when not animating. */
+	/** Continuous animated banner (premium themes only, e.g. summon comet); undefined when not animating. */
 	private bannerAnim: BannerAnimator | undefined = undefined;
 
 	// Custom header from extension (undefined = use built-in header)
@@ -413,7 +412,7 @@ export class InteractiveMode {
 		this.hideThinkingBlock = this.settingsManager.getHideThinkingBlock();
 
 		// Register themes from resource loader and initialize.
-		// Honor a PI_THEME / --theme override (main.ts unifies the flag into PI_THEME) so an explicitly
+		// Honor a SUMMON_THEME / --theme override (main.ts unifies the flag into SUMMON_THEME) so an explicitly
 		// selected theme is NOT clobbered back to the settings.json default when interactive mode starts.
 		setRegisteredThemes(this.session.resourceLoader.getThemes().themes);
 		initTheme(this.settingsManager.getEffectiveTheme(), true);
@@ -620,7 +619,7 @@ export class InteractiveMode {
 
 		// Add header with keybindings from config (unless silenced)
 		if (this.options.verbose || !this.settingsManager.getQuietStartup()) {
-			// Premium "branded" themes (e.g. aurora) ship a gradient wordmark banner. When it fits
+			// Premium "branded" themes (e.g. summon) ship a gradient wordmark banner. When it fits
 			// the terminal we render a CLEAN startup: the gradient wordmark + a brief system-info
 			// line, and we suppress the verbose instructions + full loaded-resource listing (both
 			// stay one keystroke away via ctrl+o / --verbose). Narrow terminals and plain themes
@@ -639,11 +638,11 @@ export class InteractiveMode {
 					? `${theme.fg("muted", tagline)}${theme.fg("dim", `  ·  v${this.version}`)}`
 					: theme.fg("dim", `v${this.version}`);
 				const settledWordmark = bannerLines.join("\n");
-				// Premium continuous animation (aurora "comet"): the neon wordmark's gradient drifts boldly
+				// Premium continuous animation (summon "comet"): the neon wordmark's gradient drifts boldly
 				// while a bright glint sweeps the word shedding a comet trail, looping seamlessly. Only on a
 				// real TTY — piped/redirected output would otherwise be spammed with escape sequences, so
 				// there we show the static gradient banner instead.
-				const cometFrames = theme.auroraBannerCometFrames();
+				const cometFrames = theme.summonBannerCometFrames();
 				if (cometFrames && process.stdout.isTTY) {
 					this.bannerAnim = new BannerAnimator(
 						cometFrames,
@@ -916,7 +915,7 @@ export class InteractiveMode {
 	}
 
 	private async checkForPackageUpdates(): Promise<string[]> {
-		if (process.env.PI_OFFLINE) {
+		if (process.env.SUMMON_OFFLINE) {
 			return [];
 		}
 
@@ -1012,7 +1011,7 @@ export class InteractiveMode {
 	}
 
 	private reportInstallTelemetry(version: string): void {
-		if (process.env.PI_OFFLINE) {
+		if (process.env.SUMMON_OFFLINE) {
 			return;
 		}
 
@@ -1022,7 +1021,7 @@ export class InteractiveMode {
 
 		void fetch(`https://pi.dev/api/report-install?version=${encodeURIComponent(version)}`, {
 			headers: {
-				"User-Agent": getPiUserAgent(version),
+				"User-Agent": getSummonUserAgent(version),
 			},
 			signal: AbortSignal.timeout(5000),
 		})
@@ -1853,10 +1852,10 @@ export class InteractiveMode {
 		// Premium themes ship a signature gradient → build pre-coloured spinner frames
 		// whose hue breathes through the gradient each tick (an animated neon shimmer).
 		// Only when no extension supplied a custom indicator.
-		// Prefer the aurora wave ribbon (premium opt-in), else the breathing single-glyph spinner.
+		// Prefer the summon wave ribbon (premium opt-in), else the breathing single-glyph spinner.
 		const gradientFrames = this.workingIndicatorOptions
 			? undefined
-			: (theme.auroraSpinnerFrames() ?? theme.gradientSpinnerFrames());
+			: (theme.summonSpinnerFrames() ?? theme.gradientSpinnerFrames());
 		const indicator = this.workingIndicatorOptions ?? {
 			frames: gradientFrames ?? theme.spinnerFrames(),
 			intervalMs: theme.spinnerIntervalMs(),
@@ -2629,7 +2628,7 @@ export class InteractiveMode {
 			// Write to temp file
 			const tmpDir = os.tmpdir();
 			const ext = extensionForImageMimeType(image.mimeType) ?? "png";
-			const fileName = `pi-clipboard-${crypto.randomUUID()}.${ext}`;
+			const fileName = `summon-clipboard-${crypto.randomUUID()}.${ext}`;
 			const filePath = path.join(tmpDir, fileName);
 			fs.writeFileSync(filePath, Buffer.from(image.bytes));
 
@@ -2751,11 +2750,6 @@ export class InteractiveMode {
 			}
 			if (text === "/arminsayshi") {
 				this.handleArminSaysHi();
-				this.editor.setText("");
-				return;
-			}
-			if (text === "/dementedelves") {
-				this.handleDementedDelves();
 				this.editor.setText("");
 				return;
 			}
@@ -5093,7 +5087,7 @@ export class InteractiveMode {
 			}
 			setRegisteredThemes(this.session.resourceLoader.getThemes().themes);
 			this.hideThinkingBlock = this.settingsManager.getHideThinkingBlock();
-			// Honor the PI_THEME override (e.g. a launcher's `--theme <name>`), not just
+			// Honor the SUMMON_THEME override (e.g. a launcher's `--theme <name>`), not just
 			// settings.json — otherwise /reload silently reverts the active theme.
 			const themeName = this.settingsManager.getEffectiveTheme();
 			const themeResult = themeName ? setTheme(themeName, true) : { success: true };
@@ -5597,12 +5591,6 @@ export class InteractiveMode {
 	private handleArminSaysHi(): void {
 		this.chatContainer.addChild(new Spacer(1));
 		this.chatContainer.addChild(new ArminComponent(this.ui));
-		this.ui.requestRender();
-	}
-
-	private handleDementedDelves(): void {
-		this.chatContainer.addChild(new Spacer(1));
-		this.chatContainer.addChild(new EarendilAnnouncementComponent());
 		this.ui.requestRender();
 	}
 

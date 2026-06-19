@@ -17,7 +17,7 @@
  * config, so they render identically on every terminal.
  */
 
-import { type Component, visibleWidth } from "@earendil-works/pi-tui";
+import { type Component, visibleWidth } from "@summon/tui";
 import { type ThemeColor, theme } from "../theme/theme.ts";
 
 export interface BoxGlyphs {
@@ -76,7 +76,7 @@ export function wrapBoxBody(bodyLines: string[], bodyWidth: number, v: string, e
 // ============================================================================
 
 export interface MessageBoxOptions {
-	/** Label shown in the top border (already-cased text, e.g. "YOU" / "AURORA"). */
+	/** Label shown in the top border (already-cased text, e.g. "YOU" / "SUMMON"). */
 	label: string;
 	/** Theme colour for the box edges. */
 	borderColor: ThemeColor;

@@ -2,12 +2,12 @@
  * Continuous startup-banner animation driver.
  *
  * Holds a precomputed, seamless-looping set of fully-coloured banner frames and cycles through them
- * forever, so a premium themed banner stays alive for the life of the session (e.g. the aurora
+ * forever, so a premium themed banner stays alive for the life of the session (e.g. the summon
  * "comet" effect). It is intentionally NOT a TUI Component — it owns only a timer and an index; the
  * header widget reads {@link current} and the owner pushes the new frame via the `onFrame` callback
  * (which refreshes the header + calls `ui.requestRender()`).
  *
- * The frame set is built to wrap seamlessly (see Theme.auroraBannerCometFrames), so looping
+ * The frame set is built to wrap seamlessly (see Theme.summonBannerCometFrames), so looping
  * `index = (index + 1) % frames.length` never produces a visual seam. {@link start}/{@link stop}
  * are idempotent; {@link stop} (called on teardown) clears the timer so no animation outlives the UI.
  */

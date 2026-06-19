@@ -74,3 +74,13 @@ test("escapesRoot blocks writes outside the project root (sibling-prefix safe)",
 	assert.equal(escapesRoot("src/core.ts", root), false);
 	assert.equal(escapesRoot("/work/repo/src/x", root), false);
 });
+
+// Cross-platform: relative paths must resolve in-root regardless of OS path separator (Windows
+// regression — a forward-slash prefix check flagged every in-root path as an escape).
+test("escapesRoot resolves relative in-root paths on any platform", () => {
+	const root = process.cwd();
+	assert.equal(escapesRoot("src/core.ts", root), false);
+	assert.equal(escapesRoot("./a/b/c.ts", root), false);
+	assert.equal(escapesRoot(".", root), false);
+	assert.ok(escapesRoot("../escape.ts", root));
+});

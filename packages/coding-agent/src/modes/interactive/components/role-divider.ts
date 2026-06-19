@@ -8,7 +8,7 @@
  * share a single implementation without duplicating code.
  */
 
-import type { Component } from "@earendil-works/pi-tui";
+import type { Component } from "@summon/tui";
 import { theme } from "../theme/theme.ts";
 
 // ---------------------------------------------------------------------------

@@ -42,13 +42,13 @@ export function validateTeam(t: Team, registry: Map<string, AgentBundle>): void 
 	});
 }
 
-// Load global + project-local teams (<root>/.pi/teams), validated against the agent registry.
+// Load global + project-local teams (<root>/.summon/teams), validated against the agent registry.
 // Reads HARNESS_TEAMS_DIR on each call (not at module load) so tests can override via process.env.
 export function loadTeams(registry: Map<string, AgentBundle>, cwd = process.cwd()): Map<string, Team> {
 	const { root } = resolveProject(cwd);
 	const globalTeams = process.env.HARNESS_TEAMS_DIR ?? DEFAULT_TEAMS_DIR;
 	const teams = new Map<string, Team>();
-	for (const dir of [globalTeams, join(root, ".pi/teams")]) {
+	for (const dir of [globalTeams, join(root, ".summon/teams")]) {
 		if (!existsSync(dir)) continue;
 		for (const f of readdirSync(dir)) {
 			if (!f.endsWith(".json")) continue;

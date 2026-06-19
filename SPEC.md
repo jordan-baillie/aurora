@@ -1,17 +1,17 @@
-# Aurora — full system specification
+# Summon — full system specification
 
-Aurora is a single branded product — one `aurora` command — made of two layers that ship together in
+Summon is a single branded product — one `summon` command — made of two layers that ship together in
 this one repo:
 
 - **The engine** — the agent itself (built on the Pi coding agent, MIT; see NOTICE), white-labeled to
-  `aurora`: config home `~/.aurora`, the aurora theme as the default look, and the full neon TUI
+  `summon`: config home `~/.summon`, the summon theme as the default look, and the full neon TUI
   rendering (theme abstraction, gradient wordmark banner, rounded ascii-box tool cards, bordered
   messages, a jitter-free animator, a session card).
 - **The harness** — a first-party delegation runtime bundled as a **built-in extension**: the
   `spawn_agent` tool family that runs specialised, tool-restricted, model-tiered sub-agents with
   output-contract validation, deterministic verification, a window-budget governor, safety guards, a
   live multi-agent dashboard, named teams, and an optional warm worker pool. Auto-loaded with zero
-  setup; sub-agents are spawned as `aurora`.
+  setup; sub-agents are spawned as `summon`.
 
 This document is the complete specification of both.
 
@@ -31,14 +31,14 @@ frontier→opus (overridable — see A.9). The seed registry: **scout** (fast, r
 **builder** (standard, minimal-diff implement + self-verify), **reviewer** (fast, independent claim
 verifier), **orchestrator** (frontier, delegate-only).
 
-**Effective registry = global (`agents/`) + project-local (`<project>/.pi/agents/`)**, the latter
+**Effective registry = global (`agents/`) + project-local (`<project>/.summon/agents/`)**, the latter
 overriding by name. Resolved by walking up from `cwd` to the nearest `.harness.json`/`.git`.
 
 **Registry awareness (the orchestrator's roster).** At load the harness builds a compact digest
 (`registryDigest` — `name[tier; tools; ->contract]` per specialist) and injects it into the
 `spawn_agent`/`spawn_agents` tool descriptions: this is the *authoritative*, always-present roster (no
 file read, never stale). It also writes a content-hashed machine-readable index (`registryIndex` →
-`~/.aurora/harness/registry-index.json`, idempotent by hash, best-effort) for humans/tooling and for
+`~/.summon/harness/registry-index.json`, idempotent by hash, best-effort) for humans/tooling and for
 an orchestrator that wants full `role` detail.
 
 ### A.2 Fail-closed validator
@@ -52,7 +52,7 @@ Runs at load (`validateBundle`). Rejects unsafe shapes structurally:
 
 ### A.3 Spawn + output-contract check
 `spawnAgent` builds the worker system prompt (role + skill + expertise + the contract as explicit
-required sections), spawns a `pi` subprocess with `ANTHROPIC_API_KEY` ejected (forces $0 OAuth
+required sections), spawns a `summon` subprocess with `ANTHROPIC_API_KEY` ejected (forces $0 OAuth
 routing through the user's Claude subscription), captures the result, and checks the output contract
 (`checkContract`): every `required_section` heading must be present and no `forbidden` string may
 appear. A contract miss marks the result failed.
@@ -87,15 +87,15 @@ side effects, so a side-effecting agent always runs. Cache hits/dedups cost no w
 with `HARNESS_NO_CACHE=1`.
 
 ### A.6 Transports
-- `"oneshot"` (default) — a cold `pi -p` per task.
-- `"pool"` — a reused warm `pi --mode rpc` worker, context reset via `new_session` between tasks
+- `"oneshot"` (default) — a cold `summon -p` per task.
+- `"pool"` — a reused warm `summon --mode rpc` worker, context reset via `new_session` between tasks
   (`src/pool.ts` + `src/rpc-worker.ts`; idle-reuse, grow-to-size, drop-unhealthy, drain).
 Both apply the identical contract + deterministic-verify gating (single-sourced `finalizeResult`).
 `spawn_agents` uses an **adaptive default**: same-agent batches of ≥8 tasks auto-use the pool
 (benchmarked ~30–47% faster via reuse across waves; see `bench/`), else oneshot. Override per call.
 
 **Pre-warm (kill the cold-start tax).** `HARNESS_PREWARM=scout,builder` stands up `HARNESS_POOL_SIZE`
-idle `pi --mode rpc` workers per named bundle at session start (`prewarm()`, fire-and-forget, drained
+idle `summon --mode rpc` workers per named bundle at session start (`prewarm()`, fire-and-forget, drained
 on shutdown) — Stripe's "hot-and-ready" devbox model at the process level. A pre-warmed bundle is then
 routed to its hot pool at **any** batch size (`pickTransport(..., isPrewarmed(agent))`), since the
 adaptive ≥8 threshold only existed to amortise cold start; `run_team`/`run_blueprint` benefit
@@ -122,7 +122,7 @@ automatically.
 
 ### A.8 Observability, teams, scale
 - **Fleet-level observability (#8)** — two things the per-session widget can't give: (1) a **cross-run
-  ledger** (`src/fleet.ts`) appending every finished spawn (`~/.aurora/harness/fleet.jsonl`) +
+  ledger** (`src/fleet.ts`) appending every finished spawn (`~/.summon/harness/fleet.jsonl`) +
   `aggregateFleet`/`fleetDigest` (cost-per-intelligent-agent-hour, done-rates, cache-hit-rate),
   rendered to `fleet-summary.md` on shutdown; and (2) a **boot prompt audit** (`auditPrompt`) that
   renders each worker's system prompt once at load and flags any over the byte threshold — the
@@ -141,25 +141,25 @@ automatically.
   read what you depend on — `fillTemplate` fail-closes otherwise). Loader validates fail-closed (unique
   ids, exactly-one-kind per node, known non-spawn agents, acyclic via Kahn). This is the “put the LLM
   in contained boxes” primitive: the harness owns the graph + the code nodes; the model runs only
-  inside agent nodes. Global + project-local `.pi/blueprints/`; ships `scout-build-verify`.
+  inside agent nodes. Global + project-local `.summon/blueprints/`; ships `scout-build-verify`.
 - **Containerised workers** (`src/container-worker.ts`) — a PooledWorker over a real docker container
   for isolation (lifecycle smoke-proven).
 
 ### A.9 Configuration (all optional, env-overridable)
 `HARNESS_HOME` (install root; else derived from `src/paths.ts` via `import.meta.url`),
 `HARNESS_AGENTS_DIR`, `HARNESS_TEAMS_DIR`, `HARNESS_BLUEPRINTS_DIR`, `HARNESS_THEMES_DIR`,
-`PI_CODING_AGENT_DIR` / `AURORA_CODING_AGENT_DIR` (config home for the registry index, default
-`~/.aurora`), `HARNESS_POOL_SIZE`, `HARNESS_PREWARM` (comma-sep bundle names to pre-warm),
+`SUMMON_CODING_AGENT_DIR` (config home for the registry index, default
+`~/.summon`), `HARNESS_POOL_SIZE`, `HARNESS_PREWARM` (comma-sep bundle names to pre-warm),
 `HARNESS_WINDOW_TOKENS` (>0 = hard rolling-window gate), `HARNESS_NO_CACHE` (disable the within-run
 result cache), `HARNESS_WEB_TOKEN_FILE`. Model ids live in `MODEL` (`src/core.ts`).
 
 ---
 
-## Part B — The aurora engine (TUI)
+## Part B — The summon engine (TUI)
 
 A soft-fork of the Pi coding agent, branch `tui-refresh-editorial`, a linear stack of TUI commits on
 top of upstream. Source delta ≈ 26 files; everything below renders only on this engine — a released
-`pi` paints the theme's `colors`/`vars` and **ignores** the overhaul keys, so a theme that sets them
+`summon` paints the theme's `colors`/`vars` and **ignores** the overhaul keys, so a theme that sets them
 is safe everywhere.
 
 ### B.1 Theme abstraction
@@ -174,13 +174,13 @@ understands:
 - `banner` — `{ lines[], tagline? }`: an ASCII-art wordmark.
 Pure helpers on `Theme` (`signatureGradient`, `gradientAt`, `gradientText`, `bannerLines`,
 `bannerWidth`, `bannerTagline`, `gradientSpinnerFrames`) are unit-guarded. Ships themes:
-`editorial`, `brutalist`, `aurora`, `harness` (+ tweaked `dark`/`light`).
+`editorial`, `brutalist`, `summon`, `harness` (+ tweaked `dark`/`light`).
 
-### B.2 Theme selection (`--theme` / `PI_THEME`)
-`--theme <NAME>` (or `PI_THEME=<name>`) **activates** a theme; `--theme <PATH>` only **registers**
-one. All startup `initTheme` sites honour `PI_THEME ?? settings`, and `main.ts` unifies the `--theme`
-flag into `PI_THEME` so the selection survives the interactive re-init (this also fixes
-`pi --theme editorial/brutalist` generally). A `pi themes` command lists resolvable themes.
+### B.2 Theme selection (`--theme` / `SUMMON_THEME`)
+`--theme <NAME>` (or `SUMMON_THEME=<name>`) **activates** a theme; `--theme <PATH>` only **registers**
+one. All startup `initTheme` sites honour `SUMMON_THEME ?? settings`, and `main.ts` unifies the `--theme`
+flag into `SUMMON_THEME` so the selection survives the interactive re-init (this also fixes
+`summon --theme editorial/brutalist` generally). A `summon themes` command lists resolvable themes.
 
 ### B.3 Gradient wordmark banner + breathing spinner
 At startup the engine paints `banner.lines` with a **column-aligned** gradient (colours line up
@@ -189,7 +189,7 @@ Spinner frames "breathe" — hue cycles through the same `gradient` each tick.
 
 ### B.4 Rounded ascii-box tool cards
 The `ascii-box` tool block is drawn from the theme's box-drawing glyphs (not hard-coded chars), so
-`aurora`'s rounded set renders `╭── tool ──╮ / │ … │ / ╰── ✓ ── 2.4s ──╯`: the tool name accented,
+`summon`'s rounded set renders `╭── tool ──╮ / │ … │ / ╰── ✓ ── 2.4s ──╯`: the tool name accented,
 the completion pill semantic (success/error). `brutalist` (asciiOnly) renders the portable set.
 
 ### B.5 Bordered messages (`messageStyle: "box"`)
@@ -220,37 +220,37 @@ line truncated to inner width (frame can never break).
 ## Part C — How they fit (the integration)
 
 The harness is bundled as a **built-in, app-shipped extension** so it works the moment you build
-Aurora — no install step, no per-user wiring.
+Summon — no install step, no per-user wiring.
 
 - **Built-in resources source** (engine): the package-manager scans an app-bundled dir,
   `<app>/{src|dist}/builtin/extensions` (`config.getBuiltinExtensionsDir()`), as a lowest-precedence
   resource source. A user/project extension of the same name still wins; users can disable via
   settings. This is a general capability (first-party features ship with the app), used here for the
   harness.
-- **The bundled extensions** — `src/builtin/extensions/aurora-spawn.ts` (spawn_agent / spawn_agents /
-  run_team) and `aurora-observe.ts` (live dashboard + `/harness-web`) re-export the harness under
+- **The bundled extensions** — `src/builtin/extensions/summon-spawn.ts` (spawn_agent / spawn_agents /
+  run_team) and `summon-observe.ts` (live dashboard + `/harness-web`) re-export the harness under
   `src/builtin/harness/`. Compiled to `dist/builtin/**` on build; agent/team data files are copied by
   `copy-assets`.
-- **Sub-agent binary** — the harness spawns workers as `AGENT_BIN` (`paths.ts`, default `aurora`,
-  env-overridable `AURORA_BIN`), so delegated work runs the same product.
+- **Sub-agent binary** — the harness spawns workers as `AGENT_BIN` (`paths.ts`, default `summon`,
+  env-overridable `SUMMON_BIN`), so delegated work runs the same product.
 - **Worker tool safety** — workers are spawned with a strict `--tools <allowlist>`; the engine applies
   that allowlist to **extension** tools too (`isAllowedTool` in `agent-session`), so a sub-agent never
   sees `spawn_agent` even though the built-in registers it. The validator (load-time, fail-closed) is
   the second layer.
-- **Theme** — `aurora` and `harness` are **built-in themes** (`getBuiltinThemes`), and `aurora` is the
-  default (`getDefaultTheme`). Switch with `aurora themes <name>`.
+- **Theme** — `summon` and `harness` are **built-in themes** (`getBuiltinThemes`), and `summon` is the
+  default (`getDefaultTheme`). Switch with `summon themes <name>`.
 
 ### Build & verify
 ```bash
-npm install && npm run build               # builds tui · ai · agent · coding-agent (the `aurora` CLI)
-npm link                                   # `aurora` on PATH
+npm install && npm run build               # builds tui · ai · agent · coding-agent (the `summon` CLI)
+npm link                                   # `summon` on PATH
 npm run check                              # full monorepo gate (biome · tsgo · smokes)
 # harness unit tests (run from source):
 node --experimental-strip-types --test packages/coding-agent/src/builtin/harness/test/*.test.ts
 ```
 
 ### Provenance & licence
-Aurora is a derivative work of [`badlogic/pi-mono`](https://github.com/badlogic/pi-mono) (the Pi
+Summon is a derivative work of [`badlogic/pi-mono`](https://github.com/badlogic/pi-mono) (the Pi
 coding agent, MIT © Mario Zechner) — full engine source and history retained under MIT. The Pi credit
-lives in `NOTICE` + `LICENSE`; everything else is branded Aurora. Aurora adds no API key: it drives
-your own authenticated login over OAuth.
+lives in `NOTICE` + `LICENSE`; everything else is branded Summon. Summon adds no API key: it drives
+your own authenticated login over OAuth (the `/login` slash-command inside the running app).

@@ -2,7 +2,7 @@
  * TUI config selector for `pi config` command
  */
 
-import { ProcessTerminal, TUI } from "@earendil-works/pi-tui";
+import { ProcessTerminal, TUI } from "@summon/tui";
 import type { ResolvedPaths } from "../core/package-manager.ts";
 import type { SettingsManager } from "../core/settings-manager.ts";
 import { ConfigSelectorComponent } from "../modes/interactive/components/config-selector.ts";
@@ -17,7 +17,7 @@ export interface ConfigSelectorOptions {
 
 /** Show TUI config selector and return when closed */
 export async function selectConfig(options: ConfigSelectorOptions): Promise<void> {
-	// Initialize theme before showing TUI (honor a PI_THEME / --theme override over the settings default)
+	// Initialize theme before showing TUI (honor a SUMMON_THEME / --theme override over the settings default)
 	initTheme(options.settingsManager.getEffectiveTheme(), true);
 
 	return new Promise((resolve) => {

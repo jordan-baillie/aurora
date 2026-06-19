@@ -72,7 +72,7 @@ test("aggregateFleet computes done-rate, agent-hours, tokens, cache-hit-rate, an
 
 test("fleetDigest renders a markdown summary with per-agent rows", () => {
 	const md = fleetDigest(aggregateFleet([entry({ agent: "scout" }), entry({ agent: "builder" })]));
-	assert.match(md, /# Aurora harness — fleet summary/);
+	assert.match(md, /# Summon harness — fleet summary/);
 	assert.match(md, /## by agent/);
 	assert.ok(md.includes("scout") && md.includes("builder"));
 });

@@ -1,6 +1,5 @@
-import { getPiUserAgent } from "./pi-user-agent.ts";
+import { getSummonUserAgent } from "./summon-user-agent.ts";
 
-const LATEST_VERSION_URL = "https://pi.dev/api/latest-version";
 const DEFAULT_VERSION_CHECK_TIMEOUT_MS = 10000;
 
 export interface LatestPiRelease {
@@ -57,11 +56,14 @@ export async function getLatestPiRelease(
 	currentVersion: string,
 	options: { timeoutMs?: number } = {},
 ): Promise<LatestPiRelease | undefined> {
-	if (process.env.PI_SKIP_VERSION_CHECK || process.env.PI_OFFLINE) return undefined;
+	// Off by default: Summon has no central update server, so it never phones home. Opt in by pointing
+	// SUMMON_VERSION_CHECK_URL at an endpoint returning { version, packageName?, note? }.
+	const latestVersionUrl = process.env.SUMMON_VERSION_CHECK_URL;
+	if (!latestVersionUrl || process.env.SUMMON_SKIP_VERSION_CHECK || process.env.SUMMON_OFFLINE) return undefined;
 
-	const response = await fetch(LATEST_VERSION_URL, {
+	const response = await fetch(latestVersionUrl, {
 		headers: {
-			"User-Agent": getPiUserAgent(currentVersion),
+			"User-Agent": getSummonUserAgent(currentVersion),
 			accept: "application/json",
 		},
 		signal: AbortSignal.timeout(options.timeoutMs ?? DEFAULT_VERSION_CHECK_TIMEOUT_MS),

@@ -1,4 +1,4 @@
-import { Box, Container, Markdown, type MarkdownTheme, Spacer } from "@earendil-works/pi-tui";
+import { Box, Container, Markdown, type MarkdownTheme, Spacer } from "@summon/tui";
 import { getMarkdownTheme, theme } from "../theme/theme.ts";
 import { MessageBoxFrame } from "./box-frame.ts";
 import { RoleHeaderComponent } from "./role-divider.ts";
@@ -14,7 +14,7 @@ const OSC133_ZONE_FINAL = "\x1b]133;C\x07";
  *  - "fill"    (dark/light): Box with userMessageBg — pixel-identical to pre-Phase-2.
  *  - "rule"    (editorial):  role-label + hr rule header, indented Markdown body.
  *  - "bracket" (brutalist):  --[ user ]-- header via Theme.roleHeader, indented body.
- *  - "box"     (aurora):     full rounded box around the message, accent role label.
+ *  - "box"     (summon):     full rounded box around the message, accent role label.
  */
 export class UserMessageComponent extends Container {
 	private text: string;
@@ -50,7 +50,7 @@ export class UserMessageComponent extends Container {
 			);
 			this.addChild(contentBox);
 		} else if (style === "box") {
-			// ── Box: full rounded frame around the message (aurora) ─────────
+			// ── Box: full rounded frame around the message (summon) ─────────
 			const body = new Container();
 			body.addChild(new Markdown(this.text.trim(), 0, 0, this.markdownTheme));
 			this.addChild(

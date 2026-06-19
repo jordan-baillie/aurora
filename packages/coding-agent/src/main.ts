@@ -6,8 +6,8 @@
  */
 
 import { createInterface } from "node:readline";
-import { type ImageContent, modelsAreEqual } from "@earendil-works/pi-ai";
-import { ProcessTerminal, setKeybindings, TUI } from "@earendil-works/pi-tui";
+import { type ImageContent, modelsAreEqual } from "@summon/ai";
+import { ProcessTerminal, setKeybindings, TUI } from "@summon/tui";
 import chalk from "chalk";
 import { type Args, type Mode, parseArgs, printHelp } from "./cli/args.ts";
 import { processFileArguments } from "./cli/file-processor.ts";
@@ -424,10 +424,10 @@ export interface MainOptions {
 
 export async function main(args: string[], options?: MainOptions) {
 	resetTimings();
-	const offlineMode = args.includes("--offline") || isTruthyEnvFlag(process.env.PI_OFFLINE);
+	const offlineMode = args.includes("--offline") || isTruthyEnvFlag(process.env.SUMMON_OFFLINE);
 	if (offlineMode) {
-		process.env.PI_OFFLINE = "1";
-		process.env.PI_SKIP_VERSION_CHECK = "1";
+		process.env.SUMMON_OFFLINE = "1";
+		process.env.SUMMON_SKIP_VERSION_CHECK = "1";
 	}
 
 	if (process.platform === "win32") {
@@ -655,13 +655,13 @@ export async function main(args: string[], options?: MainOptions) {
 	);
 	time("prepareInitialMessage");
 	{
-		// Precedence: --theme <name> flag > PI_THEME env var > settings.json > default (editorial)
-		const themeOverride = parsed.themeName ?? process.env.PI_THEME ?? undefined;
-		// Unify the flag into PI_THEME so later re-inits (interactive mode, resume, config selector)
+		// Precedence: --theme <name> flag > SUMMON_THEME env var > settings.json > default (editorial)
+		const themeOverride = parsed.themeName ?? process.env.SUMMON_THEME ?? undefined;
+		// Unify the flag into SUMMON_THEME so later re-inits (interactive mode, resume, config selector)
 		// honor the same override instead of falling back to the settings.json default.
-		if (themeOverride) process.env.PI_THEME = themeOverride;
+		if (themeOverride) process.env.SUMMON_THEME = themeOverride;
 		// From here on, getEffectiveTheme() is the single source of the active theme
-		// name (PI_THEME override, now including any --theme flag, else settings.json).
+		// name (SUMMON_THEME override, now including any --theme flag, else settings.json).
 		initTheme(settingsManager.getEffectiveTheme(), appMode === "interactive");
 	}
 	time("initTheme");
@@ -683,9 +683,9 @@ export async function main(args: string[], options?: MainOptions) {
 		process.exit(1);
 	}
 
-	const startupBenchmark = isTruthyEnvFlag(process.env.PI_STARTUP_BENCHMARK);
+	const startupBenchmark = isTruthyEnvFlag(process.env.SUMMON_STARTUP_BENCHMARK);
 	if (startupBenchmark && appMode !== "interactive") {
-		console.error(chalk.red("Error: PI_STARTUP_BENCHMARK only supports interactive mode"));
+		console.error(chalk.red("Error: SUMMON_STARTUP_BENCHMARK only supports interactive mode"));
 		process.exit(1);
 	}
 

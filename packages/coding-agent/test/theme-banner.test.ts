@@ -1,7 +1,7 @@
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { visibleWidth } from "@earendil-works/pi-tui";
+import { visibleWidth } from "@summon/tui";
 import { describe, expect, test } from "vitest";
 import { loadThemeFromPath, type Theme } from "../src/modes/interactive/theme/theme.ts";
 
@@ -9,10 +9,10 @@ import { loadThemeFromPath, type Theme } from "../src/modes/interactive/theme/th
 // Phase 3 — signature gradient + wordmark banner
 //
 // These guard the whole "premium banner/gradient" class of behaviour so a future
-// renderer change can't silently break the aurora wordmark or the breathing
+// renderer change can't silently break the summon wordmark or the breathing
 // spinner. We build the fixture from the real builtin `dark.json` (so every one
 // of the 40+ required colours is valid) and only *add* the optional gradient +
-// banner keys — exactly how aurora.json opts in.
+// banner keys — exactly how summon.json opts in.
 // ============================================================================
 
 const DARK_JSON = join(__dirname, "..", "src", "modes", "interactive", "theme", "dark.json");
@@ -20,9 +20,9 @@ const DARK_JSON = join(__dirname, "..", "src", "modes", "interactive", "theme", 
 /** Write a temp theme = builtin dark + optional gradient/banner, load it truecolor. */
 function loadAugmented(extra: Record<string, unknown>): Theme {
 	const base = JSON.parse(readFileSync(DARK_JSON, "utf-8"));
-	const merged = { ...base, name: "test-aurora", vars: { ...(base.vars ?? {}), myaccent: "#a78bfa" }, ...extra };
+	const merged = { ...base, name: "test-summon", vars: { ...(base.vars ?? {}), myaccent: "#a78bfa" }, ...extra };
 	const dir = mkdtempSync(join(tmpdir(), "theme-banner-"));
-	const p = join(dir, "test-aurora.json");
+	const p = join(dir, "test-summon.json");
 	writeFileSync(p, JSON.stringify(merged));
 	return loadThemeFromPath(p, "truecolor");
 }
@@ -111,10 +111,10 @@ describe("Theme gradient spinner", () => {
 	});
 });
 
-describe("Theme aurora wave-ribbon spinner", () => {
+describe("Theme summon wave-ribbon spinner", () => {
 	test("opt-in (layout.spinnerStyle:wave) + gradient → painted frames, every frame equal width", () => {
 		const theme = loadAugmented({ gradient: GRADIENT, layout: { spinnerStyle: "wave" } });
-		const frames = theme.auroraSpinnerFrames()!;
+		const frames = theme.summonSpinnerFrames()!;
 		expect(frames).toBeDefined();
 		expect(frames.length).toBeGreaterThan(1);
 		// CRITICAL invariant: identical visible width across ALL frames (no loader jitter).
@@ -125,19 +125,19 @@ describe("Theme aurora wave-ribbon spinner", () => {
 	});
 
 	test("deterministic: same theme builds byte-identical frames", () => {
-		const a = loadAugmented({ gradient: GRADIENT, layout: { spinnerStyle: "wave" } }).auroraSpinnerFrames();
-		const b = loadAugmented({ gradient: GRADIENT, layout: { spinnerStyle: "wave" } }).auroraSpinnerFrames();
+		const a = loadAugmented({ gradient: GRADIENT, layout: { spinnerStyle: "wave" } }).summonSpinnerFrames();
+		const b = loadAugmented({ gradient: GRADIENT, layout: { spinnerStyle: "wave" } }).summonSpinnerFrames();
 		expect(a).toEqual(b);
 	});
 
 	test("off by default: gradient but no wave opt-in → undefined (falls back to breathing spinner)", () => {
 		const theme = loadAugmented({ gradient: GRADIENT });
-		expect(theme.auroraSpinnerFrames()).toBeUndefined();
+		expect(theme.summonSpinnerFrames()).toBeUndefined();
 	});
 
 	test("wave opt-in but no gradient → undefined (needs a signature gradient)", () => {
 		const theme = loadAugmented({ layout: { spinnerStyle: "wave" } });
-		expect(theme.auroraSpinnerFrames()).toBeUndefined();
+		expect(theme.summonSpinnerFrames()).toBeUndefined();
 	});
 
 	// Map each painted cell back to its block-glyph height level (0..7). Strips the truecolor
@@ -146,7 +146,7 @@ describe("Theme aurora wave-ribbon spinner", () => {
 	const heights = (frame: string): number[] => [...frame.replace(/\x1b\[[0-9;]*m/g, "")].map((g) => LEVELS.indexOf(g));
 
 	test("clean shape: every frame is a single unimodal crest (no busy multi-bump equalizer)", () => {
-		const frames = loadAugmented({ gradient: GRADIENT, layout: { spinnerStyle: "wave" } }).auroraSpinnerFrames()!;
+		const frames = loadAugmented({ gradient: GRADIENT, layout: { spinnerStyle: "wave" } }).summonSpinnerFrames()!;
 		for (const f of frames) {
 			const lv = heights(f);
 			expect(lv.every((n) => n >= 0)).toBe(true); // only known glyphs
@@ -159,14 +159,14 @@ describe("Theme aurora wave-ribbon spinner", () => {
 	});
 
 	test("full dynamic range: the swell crests at a full block and troughs at the lowest block", () => {
-		const frames = loadAugmented({ gradient: GRADIENT, layout: { spinnerStyle: "wave" } }).auroraSpinnerFrames()!;
+		const frames = loadAugmented({ gradient: GRADIENT, layout: { spinnerStyle: "wave" } }).summonSpinnerFrames()!;
 		const all = frames.flatMap(heights);
 		expect(Math.max(...all)).toBe(LEVELS.length - 1); // reaches █ (bright, punchy crest)
 		expect(Math.min(...all)).toBe(0); // reaches ▁ (full contrast, not a faint ripple)
 	});
 });
 
-describe("Theme aurora comet banner", () => {
+describe("Theme summon comet banner", () => {
 	const COMET = { gradient: GRADIENT, banner: BANNER, layout: { bannerAnimation: "comet" } };
 	// Glyph-grid diff: strip colour, compare the GR×GC character grids cell-by-cell. Robust to the
 	// comet's particles appearing/vanishing (unlike a per-colour-code diff, which would misalign).
@@ -187,7 +187,7 @@ describe("Theme aurora comet banner", () => {
 
 	test("opt-in + gradient + banner → painted frames; fixed grid (wordmark + 2 spray rows), constant width", () => {
 		const theme = loadAugmented(COMET);
-		const frames = theme.auroraBannerCometFrames()!;
+		const frames = theme.summonBannerCometFrames()!;
 		expect(frames).toBeDefined();
 		expect(frames.length).toBeGreaterThan(1);
 		const banner = theme.bannerLines()!;
@@ -202,7 +202,7 @@ describe("Theme aurora comet banner", () => {
 	});
 
 	test("seamless loop: the wrap step (last→first) is the smoothest step (comet off-screen at the seam)", () => {
-		const frames = loadAugmented(COMET).auroraBannerCometFrames()!;
+		const frames = loadAugmented(COMET).summonBannerCometFrames()!;
 		const interior: number[] = [];
 		for (let i = 0; i < frames.length - 1; i++) interior.push(glyphDiff(frames[i], frames[i + 1]));
 		const wrap = glyphDiff(frames[frames.length - 1], frames[0]);
@@ -213,7 +213,7 @@ describe("Theme aurora comet banner", () => {
 	});
 
 	test("the comet actually sweeps: a bright head ● appears mid-loop and is gone at the seam", () => {
-		const frames = loadAugmented(COMET).auroraBannerCometFrames()!;
+		const frames = loadAugmented(COMET).summonBannerCometFrames()!;
 		const hasHead = (f: string) => f.replace(/\x1b\[[0-9;]*m/g, "").includes("●");
 		expect(frames.some(hasHead)).toBe(true); // it sweeps through
 		expect(frames.some((f) => !hasHead(f))).toBe(true); // and clears (off-screen part of the loop)
@@ -222,31 +222,31 @@ describe("Theme aurora comet banner", () => {
 	});
 
 	test("deterministic: same theme builds byte-identical comet frames (fixed-seed trail)", () => {
-		expect(loadAugmented(COMET).auroraBannerCometFrames()).toEqual(loadAugmented(COMET).auroraBannerCometFrames());
+		expect(loadAugmented(COMET).summonBannerCometFrames()).toEqual(loadAugmented(COMET).summonBannerCometFrames());
 	});
 
 	test("multi-letter wordmark separates on blank columns without crashing, constant width", () => {
 		const twoLetter = { lines: ["## ##", "## ##", "## ##"], tagline: "x" }; // col 2 blank in every row
 		const opts = { gradient: GRADIENT, banner: twoLetter, layout: { bannerAnimation: "comet" } };
-		const frames = loadAugmented(opts).auroraBannerCometFrames()!;
+		const frames = loadAugmented(opts).summonBannerCometFrames()!;
 		expect(frames.length).toBeGreaterThan(1);
 		const widths = new Set(frames.flatMap((f) => f.split("\n").map((l) => visibleWidth(l))));
 		expect(widths.size).toBe(1); // every row of every frame same width → no jitter
 	});
 
 	test("off by default: banner + gradient but no comet opt-in → undefined", () => {
-		expect(loadAugmented({ gradient: GRADIENT, banner: BANNER }).auroraBannerCometFrames()).toBeUndefined();
+		expect(loadAugmented({ gradient: GRADIENT, banner: BANNER }).summonBannerCometFrames()).toBeUndefined();
 	});
 
 	test("comet opt-in but no gradient → undefined", () => {
 		expect(
-			loadAugmented({ banner: BANNER, layout: { bannerAnimation: "comet" } }).auroraBannerCometFrames(),
+			loadAugmented({ banner: BANNER, layout: { bannerAnimation: "comet" } }).summonBannerCometFrames(),
 		).toBeUndefined();
 	});
 
 	test("comet opt-in but no banner → undefined", () => {
 		expect(
-			loadAugmented({ gradient: GRADIENT, layout: { bannerAnimation: "comet" } }).auroraBannerCometFrames(),
+			loadAugmented({ gradient: GRADIENT, layout: { bannerAnimation: "comet" } }).summonBannerCometFrames(),
 		).toBeUndefined();
 	});
 });
@@ -259,12 +259,12 @@ describe("Backwards compatibility (no gradient/banner declared)", () => {
 		expect(theme.bannerWidth()).toBe(0);
 		expect(theme.bannerTagline()).toBeUndefined();
 		expect(theme.gradientSpinnerFrames()).toBeUndefined();
-		expect(theme.auroraSpinnerFrames()).toBeUndefined();
-		expect(theme.auroraBannerCometFrames()).toBeUndefined();
+		expect(theme.summonSpinnerFrames()).toBeUndefined();
+		expect(theme.summonBannerCometFrames()).toBeUndefined();
 	});
 
 	test("gradientText passes text through unchanged when no gradient", () => {
 		const theme = loadAugmented({});
-		expect(theme.gradientText("AURORA")).toBe("AURORA");
+		expect(theme.gradientText("SUMMON")).toBe("SUMMON");
 	});
 });

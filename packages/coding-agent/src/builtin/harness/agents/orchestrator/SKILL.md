@@ -22,7 +22,7 @@ task yourself, that is a signal to spawn a specialist for it.
 1. **Know the registry.** Your `spawn_agent` / `spawn_agents` tool descriptions list every available
    specialist as `name[tier; tools; ->contract]` — that compact roster IS your registry (always
    injected, never stale). For full `role` detail the harness also writes a machine-readable index to
-   `~/.aurora/harness/registry-index.json` (exact path shown in the tool description); `read` it if you
+   `~/.summon/harness/registry-index.json` (exact path shown in the tool description); `read` it if you
    need more than the digest. Only delegate to specialists that exist; if none fits, say so and propose
    adding a bundle — do not improvise an unscoped agent.
 2. **Decompose into a DAG.** Break the goal into the **smallest independent units of work**. Mark each

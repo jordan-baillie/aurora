@@ -130,12 +130,12 @@ function assertAcyclic(bp: Blueprint, err: (m: string) => never): void {
 	if (seen !== bp.nodes.length) err("dependency cycle detected");
 }
 
-// ── loader (global + project-local .pi/blueprints), validated fail-closed ─────
+// ── loader (global + project-local .summon/blueprints), validated fail-closed ─────
 export function loadBlueprints(registry: Map<string, AgentBundle>, cwd = process.cwd()): Map<string, Blueprint> {
 	const { root } = resolveProject(cwd);
 	const globalDir = process.env.HARNESS_BLUEPRINTS_DIR ?? BLUEPRINTS_DIR;
 	const out = new Map<string, Blueprint>();
-	for (const dir of [globalDir, join(root, ".pi/blueprints")]) {
+	for (const dir of [globalDir, join(root, ".summon/blueprints")]) {
 		if (!existsSync(dir)) continue;
 		for (const f of readdirSync(dir)) {
 			if (!f.endsWith(".json")) continue;

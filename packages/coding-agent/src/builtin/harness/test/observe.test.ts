@@ -37,13 +37,13 @@ test("verify_failed and failed count as bad", () => {
 
 const stripAnsi = (s: string) => s.replace(/\x1b\[[0-9;]*m/g, "");
 
-test("renderWidget = AURORA header + one row per agent", () => {
+test("renderWidget = SUMMON header + one row per agent", () => {
 	const vm = feed([
 		{ t: "spawned", id: "a", agent: "scout", model: "fast", ts: Date.now() },
 		{ t: "tool", id: "a", tool: "grep", phase: "start", ts: Date.now() },
 	]);
 	const plain = renderWidget(vm).map(stripAnsi);
-	assert.ok(plain[0].includes("AURORA"), "header has the AURORA wordmark");
+	assert.ok(plain[0].includes("SUMMON"), "header has the SUMMON wordmark");
 	assert.ok(
 		plain.some((l) => l.includes("scout")),
 		"shows the agent name",

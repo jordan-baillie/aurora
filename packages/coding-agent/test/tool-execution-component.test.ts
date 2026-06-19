@@ -1,5 +1,5 @@
 import { join, resolve } from "node:path";
-import { Text, type TUI, visibleWidth } from "@earendil-works/pi-tui";
+import { Text, type TUI, visibleWidth } from "@summon/tui";
 import { Type } from "typebox";
 import { beforeAll, describe, expect, test, vi } from "vitest";
 import { getReadmePath } from "../src/config.ts";
@@ -521,9 +521,9 @@ describe("ToolExecutionComponent parity", () => {
 		},
 		{
 			title: "AGENTS.md",
-			path: join(process.cwd(), ".pi", "AGENTS.md"),
+			path: join(process.cwd(), ".summon", "AGENTS.md"),
 			content: "Hidden resource instructions",
-			compact: "read resource .pi/AGENTS.md",
+			compact: "read resource .summon/AGENTS.md",
 			hidden: "Hidden resource instructions",
 			absent: undefined,
 		},

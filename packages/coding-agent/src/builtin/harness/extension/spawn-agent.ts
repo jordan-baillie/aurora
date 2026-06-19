@@ -1,9 +1,11 @@
 // Harness v2 — Pi extension: registers `spawn_agent` (one task) and `spawn_agents` (parallel fan-out)
 // so an orchestrator pi session can delegate to specialised sub-agents. Project-aware (GLOBAL +
-// <project>/.pi/agents, .harness.json protected paths). Wraps src/core.ts (single-sourced).
+// <project>/.summon/agents, .harness.json protected paths). Wraps src/core.ts (single-sourced).
 
 import { execSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Type } from "typebox";
 import type { ExtensionAPI } from "../../../index.ts";
 import { type Blueprint, type BlueprintExec, loadBlueprints, type NodeRun, runBlueprint } from "../src/blueprint.ts";
@@ -93,7 +95,7 @@ export default function harness(pi: ExtensionAPI) {
 			)
 			.catch(() => {});
 	}
-	const runDir = (ctx: any) => `/tmp/harness-runs/${ctx?.sessionId ?? "session"}`;
+	const runDir = (ctx: any) => join(tmpdir(), "harness-runs", ctx?.sessionId ?? "session");
 
 	async function runOne(
 		agent: string,
@@ -270,7 +272,7 @@ export default function harness(pi: ExtensionAPI) {
 	pi.registerTool({
 		name: "run_team",
 		label: "Run a named team (sequential stages, parallel steps)",
-		description: `Run a named team recipe — stages run sequentially, steps within a stage run in parallel. Available teams are loaded from global + project-local .pi/teams/ directories.`,
+		description: `Run a named team recipe — stages run sequentially, steps within a stage run in parallel. Available teams are loaded from global + project-local .summon/teams/ directories.`,
 		parameters: Type.Object({
 			team: Type.String({ description: 'name of the team to run (e.g. "build-review")' }),
 			vars: Type.Optional(

@@ -16,7 +16,7 @@ describe("SettingsManager", () => {
 			rmSync(testDir, { recursive: true });
 		}
 		mkdirSync(agentDir, { recursive: true });
-		mkdirSync(join(projectDir, ".pi"), { recursive: true });
+		mkdirSync(join(projectDir, ".summon"), { recursive: true });
 	});
 
 	afterEach(() => {
@@ -198,29 +198,29 @@ describe("SettingsManager", () => {
 		});
 	});
 
-	describe("getEffectiveTheme (PI_THEME override precedence)", () => {
+	describe("getEffectiveTheme (SUMMON_THEME override precedence)", () => {
 		// Guards the whole class of "theme reverts on /reload, resume, or config-selector" bugs:
-		// a launcher activates a theme by name via the --theme flag / PI_THEME env, and every theme
+		// a launcher activates a theme by name via the --theme flag / SUMMON_THEME env, and every theme
 		// (re-)init site MUST resolve through getEffectiveTheme() so it keeps the override instead of
-		// silently falling back to settings.json. See main.ts (establishes PI_THEME) + the init sites.
-		const prevPiTheme = process.env.PI_THEME;
+		// silently falling back to settings.json. See main.ts (establishes SUMMON_THEME) + the init sites.
+		const prevPiTheme = process.env.SUMMON_THEME;
 		afterEach(() => {
-			if (prevPiTheme === undefined) delete process.env.PI_THEME;
-			else process.env.PI_THEME = prevPiTheme;
+			if (prevPiTheme === undefined) delete process.env.SUMMON_THEME;
+			else process.env.SUMMON_THEME = prevPiTheme;
 		});
 
-		it("prefers PI_THEME over settings.json", () => {
+		it("prefers SUMMON_THEME over settings.json", () => {
 			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ theme: "harness" }));
 			const manager = SettingsManager.create(projectDir, agentDir);
-			process.env.PI_THEME = "aurora";
+			process.env.SUMMON_THEME = "summon";
 			expect(manager.getTheme()).toBe("harness"); // raw config unchanged
-			expect(manager.getEffectiveTheme()).toBe("aurora"); // override wins
+			expect(manager.getEffectiveTheme()).toBe("summon"); // override wins
 		});
 
-		it("falls back to settings.json when PI_THEME is unset", () => {
+		it("falls back to settings.json when SUMMON_THEME is unset", () => {
 			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ theme: "harness" }));
 			const manager = SettingsManager.create(projectDir, agentDir);
-			delete process.env.PI_THEME;
+			delete process.env.SUMMON_THEME;
 			expect(manager.getEffectiveTheme()).toBe("harness");
 		});
 	});
@@ -228,7 +228,7 @@ describe("SettingsManager", () => {
 	describe("error tracking", () => {
 		it("should collect and clear load errors via drainErrors", () => {
 			const globalSettingsPath = join(agentDir, "settings.json");
-			const projectSettingsPath = join(projectDir, ".pi", "settings.json");
+			const projectSettingsPath = join(projectDir, ".summon", "settings.json");
 			writeFileSync(globalSettingsPath, "{ invalid global json");
 			writeFileSync(projectSettingsPath, "{ invalid project json");
 
@@ -248,13 +248,13 @@ describe("SettingsManager", () => {
 			writeFileSync(settingsPath, JSON.stringify({ theme: "dark" }));
 
 			// Delete the .pi folder that beforeEach created
-			rmSync(join(projectDir, ".pi"), { recursive: true });
+			rmSync(join(projectDir, ".summon"), { recursive: true });
 
 			// Create SettingsManager (reads both global and project settings)
 			const manager = SettingsManager.create(projectDir, agentDir);
 
 			// .pi folder should NOT have been created just from reading
-			expect(existsSync(join(projectDir, ".pi"))).toBe(false);
+			expect(existsSync(join(projectDir, ".summon"))).toBe(false);
 
 			// Settings should still be loaded from global
 			expect(manager.getTheme()).toBe("dark");
@@ -266,22 +266,22 @@ describe("SettingsManager", () => {
 			writeFileSync(settingsPath, JSON.stringify({ theme: "dark" }));
 
 			// Delete the .pi folder that beforeEach created
-			rmSync(join(projectDir, ".pi"), { recursive: true });
+			rmSync(join(projectDir, ".summon"), { recursive: true });
 
 			const manager = SettingsManager.create(projectDir, agentDir);
 
 			// .pi folder should NOT exist yet
-			expect(existsSync(join(projectDir, ".pi"))).toBe(false);
+			expect(existsSync(join(projectDir, ".summon"))).toBe(false);
 
 			// Write a project-specific setting
 			manager.setProjectPackages([{ source: "npm:test-pkg" }]);
 			await manager.flush();
 
 			// Now .pi folder should exist
-			expect(existsSync(join(projectDir, ".pi"))).toBe(true);
+			expect(existsSync(join(projectDir, ".summon"))).toBe(true);
 
 			// And settings file should be created
-			expect(existsSync(join(projectDir, ".pi", "settings.json"))).toBe(true);
+			expect(existsSync(join(projectDir, ".summon", "settings.json"))).toBe(true);
 		});
 	});
 
@@ -293,7 +293,7 @@ describe("SettingsManager", () => {
 
 		it("should use merged global and project settings", () => {
 			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ httpIdleTimeoutMs: 300000 }));
-			writeFileSync(join(projectDir, ".pi", "settings.json"), JSON.stringify({ httpIdleTimeoutMs: 0 }));
+			writeFileSync(join(projectDir, ".summon", "settings.json"), JSON.stringify({ httpIdleTimeoutMs: 0 }));
 
 			const manager = SettingsManager.create(projectDir, agentDir);
 
@@ -356,7 +356,7 @@ describe("SettingsManager", () => {
 
 		it("should return project sessionDir, overriding global", () => {
 			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ sessionDir: "/global/sessions" }));
-			writeFileSync(join(projectDir, ".pi", "settings.json"), JSON.stringify({ sessionDir: "./sessions" }));
+			writeFileSync(join(projectDir, ".summon", "settings.json"), JSON.stringify({ sessionDir: "./sessions" }));
 			const manager = SettingsManager.create(projectDir, agentDir);
 			expect(manager.getSessionDir()).toBe("./sessions");
 		});

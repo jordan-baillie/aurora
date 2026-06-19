@@ -452,7 +452,7 @@ test("spawnEnv ejects ANTHROPIC_API_KEY and sets harness env", () => {
 		const env = spawnEnv("/work/repo", [".env", "secrets"]);
 		assert.equal(env.ANTHROPIC_API_KEY, undefined, "key must be ejected to force $0 OAuth");
 		assert.equal(env.HARNESS_ROOT, "/work/repo");
-		assert.equal(env.HARNESS_PROTECTED, ".env:secrets");
+		assert.deepEqual(JSON.parse(env.HARNESS_PROTECTED ?? "null"), [".env", "secrets"]);
 	} finally {
 		if (saved === undefined) delete process.env.ANTHROPIC_API_KEY;
 		else process.env.ANTHROPIC_API_KEY = saved;

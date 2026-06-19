@@ -4,7 +4,7 @@ import { BannerAnimator } from "../src/modes/interactive/components/banner-anima
 // ============================================================================
 // BannerAnimator visibility-freeze guard.
 //
-// The themed startup banner animates forever (e.g. the aurora "comet"). If it
+// The themed startup banner animates forever (e.g. the summon "comet"). If it
 // keeps advancing while scrolled out of view, an off-screen frame change
 // straddles the viewport top and forces a flickering full-screen repaint on
 // tmux ("jitter"). The animator must FREEZE (hold its frame, emit nothing)

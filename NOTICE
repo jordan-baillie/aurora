@@ -1,4 +1,4 @@
-Aurora
+Summon
 Copyright (c) 2026 jordan-245
 
 This product is built on the Pi coding agent.
@@ -6,7 +6,7 @@ This product is built on the Pi coding agent.
   Copyright (c) 2025 Mario Zechner
   Licensed under the MIT License.
 
-Aurora is a derivative work of Pi: it rebrands the engine, sets the aurora theme
+Summon is a derivative work of Pi: it rebrands the engine, sets the summon theme
 as the default look, and bundles a first-party specialised-sub-agent delegation
 harness (the spawn_agent tool family) as a built-in capability. The Pi engine's
 source and history are retained under the MIT License (see LICENSE).

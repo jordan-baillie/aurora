@@ -7,7 +7,7 @@ import {
 	createAssistantMessageEventStream,
 	type Model,
 	type SimpleStreamOptions,
-} from "@earendil-works/pi-ai";
+} from "@summon/ai";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AuthStorage } from "../src/core/auth-storage.ts";
 import { ModelRegistry } from "../src/core/model-registry.ts";
@@ -27,15 +27,15 @@ describe("createAgentSession OpenRouter attribution headers", () => {
 		agentDir = join(tempDir, "agent");
 		mkdirSync(cwd, { recursive: true });
 		mkdirSync(agentDir, { recursive: true });
-		originalTelemetryEnv = process.env.PI_TELEMETRY;
-		delete process.env.PI_TELEMETRY;
+		originalTelemetryEnv = process.env.SUMMON_TELEMETRY;
+		delete process.env.SUMMON_TELEMETRY;
 	});
 
 	afterEach(() => {
 		if (originalTelemetryEnv === undefined) {
-			delete process.env.PI_TELEMETRY;
+			delete process.env.SUMMON_TELEMETRY;
 		} else {
-			process.env.PI_TELEMETRY = originalTelemetryEnv;
+			process.env.SUMMON_TELEMETRY = originalTelemetryEnv;
 		}
 		if (tempDir && existsSync(tempDir)) {
 			rmSync(tempDir, { recursive: true, force: true });
@@ -90,8 +90,9 @@ describe("createAgentSession OpenRouter attribution headers", () => {
 		} = {},
 	): Promise<Record<string, string> | undefined> {
 		const settingsManager = SettingsManager.create(cwd, agentDir);
-		if (options.telemetryEnabled === false) {
-			settingsManager.setEnableInstallTelemetry(false);
+		// Attribution headers are opt-in (telemetry is off by default in Summon).
+		if (options.telemetryEnabled !== undefined) {
+			settingsManager.setEnableInstallTelemetry(options.telemetryEnabled);
 		}
 
 		const authStorage = AuthStorage.create(join(agentDir, "auth.json"));
@@ -146,11 +147,13 @@ describe("createAgentSession OpenRouter attribution headers", () => {
 		}
 	}
 
-	it("adds default attribution headers for OpenRouter models", async () => {
-		const headers = await captureHeaders(createModel("openrouter", "https://openrouter.ai/api/v1"));
+	it("adds attribution headers for OpenRouter models when telemetry is enabled", async () => {
+		const headers = await captureHeaders(createModel("openrouter", "https://openrouter.ai/api/v1"), {
+			telemetryEnabled: true,
+		});
 
-		expect(headers?.["HTTP-Referer"]).toBe("https://pi.dev");
-		expect(headers?.["X-OpenRouter-Title"]).toBe("pi");
+		expect(headers?.["HTTP-Referer"]).toBe("https://github.com/jordan-245/aurora");
+		expect(headers?.["X-OpenRouter-Title"]).toBe("summon");
 		expect(headers?.["X-OpenRouter-Categories"]).toBe("cli-agent");
 	});
 
@@ -165,10 +168,12 @@ describe("createAgentSession OpenRouter attribution headers", () => {
 	});
 
 	it("adds attribution headers for custom providers routed through OpenRouter", async () => {
-		const headers = await captureHeaders(createModel("custom-openrouter", "https://openrouter.ai/api/v1"));
+		const headers = await captureHeaders(createModel("custom-openrouter", "https://openrouter.ai/api/v1"), {
+			telemetryEnabled: true,
+		});
 
-		expect(headers?.["HTTP-Referer"]).toBe("https://pi.dev");
-		expect(headers?.["X-OpenRouter-Title"]).toBe("pi");
+		expect(headers?.["HTTP-Referer"]).toBe("https://github.com/jordan-245/aurora");
+		expect(headers?.["X-OpenRouter-Title"]).toBe("summon");
 		expect(headers?.["X-OpenRouter-Categories"]).toBe("cli-agent");
 	});
 
@@ -194,7 +199,7 @@ describe("createAgentSession OpenRouter attribution headers", () => {
 		});
 
 		expect(headers?.["x-opencode-session"]).toBe("opencode-session");
-		expect(headers?.["x-opencode-client"]).toBe("pi");
+		expect(headers?.["x-opencode-client"]).toBe("summon");
 	});
 
 	it("lets configured OpenCode headers override the defaults", async () => {

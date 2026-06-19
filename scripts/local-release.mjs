@@ -6,10 +6,10 @@ import { isAbsolute, join, relative, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 
 const packages = [
-	{ directory: "packages/ai", name: "@earendil-works/pi-ai" },
-	{ directory: "packages/tui", name: "@earendil-works/pi-tui" },
-	{ directory: "packages/agent", name: "@earendil-works/pi-agent-core" },
-	{ directory: "packages/coding-agent", name: "@earendil-works/pi-coding-agent" },
+	{ directory: "packages/ai", name: "@summon/ai" },
+	{ directory: "packages/tui", name: "@summon/tui" },
+	{ directory: "packages/agent", name: "@summon/agent-core" },
+	{ directory: "packages/coding-agent", name: "@summon/coding-agent" },
 ];
 
 function printUsage() {
@@ -186,7 +186,7 @@ const options = parseArgs();
 const repoRoot = process.cwd();
 const rootPackageJson = readPackageJson(repoRoot);
 
-if (rootPackageJson.name !== "pi-monorepo") {
+if (rootPackageJson.name !== "summon-monorepo") {
 	throw new Error("Run this script from the repository root");
 }
 

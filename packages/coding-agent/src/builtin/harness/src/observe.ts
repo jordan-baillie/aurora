@@ -75,7 +75,7 @@ export function isAnimating(vm: ViewModel): boolean {
 	return false;
 }
 
-// ── aurora palette (24-bit truecolor — the pi-dev / aurora identity) ──
+// ── summon palette (24-bit truecolor — the pi-dev / summon identity) ──
 const PAL = {
 	text: "232;235;247",
 	muted: "92;100;133",
@@ -95,7 +95,7 @@ const GRAD: number[][] = [
 	[62, 240, 212],
 	[240, 111, 251],
 	[182, 156, 255],
-]; // aurora ribbon: violet→indigo→cyan→teal→fuchsia→violet (loops for shimmer)
+]; // summon ribbon: violet→indigo→cyan→teal→fuchsia→violet (loops for shimmer)
 const SPIN = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]; // braille spinner for running agents
 const fg = (rgb: string, s: string) => `\x1b[38;2;${rgb}m${s}\x1b[0m`;
 const lerp = (a: number[], b: number[], t: number) => a.map((v, i) => Math.round(v + (b[i] - v) * t));
@@ -155,7 +155,7 @@ export function setExpanded(vm: ViewModel, target?: string): void {
 	vm.expanded = vm.agents.has(target) ? target : undefined;
 }
 
-// The boot-splash wordmark used to live here. It now lives in the THEME banner (aurora.json →
+// The boot-splash wordmark used to live here. It now lives in the THEME banner (summon.json →
 // painted permanently into the startup transcript by interactive-mode), so the live widget no
 // longer paints a second, disappearing copy. The widget is the live agent panel ONLY.
 
@@ -194,8 +194,8 @@ export function renderWidget(vm: ViewModel, width: number = 72, frame = 0): stri
 	const W = Math.max(46, Math.min(typeof width === "number" && width > 0 ? width : 72, 100));
 	const elapsed = dur(Date.now() - vm.startedAt);
 	const L: string[] = [];
-	// header rail: ⬢ AURORA (shimmering gradient) + coloured counts + elapsed
-	const mark = fg(PAL.muted, "⬢ ") + gradText("AURORA", (frame % 60) / 60);
+	// header rail: ⬢ SUMMON (shimmering gradient) + coloured counts + elapsed
+	const mark = fg(PAL.muted, "⬢ ") + gradText("SUMMON", (frame % 60) / 60);
 	const stat = `${fg(PAL.run, `▸${run}`)} ${fg(PAL.done, `✓${ok}`)} ${fg(PAL.fail, `✗${bad}`)}`;
 	L.push(`${mark}  ${stat}  ${fg(PAL.border, "·")}  ${fg(PAL.muted, `⏱ ${elapsed}`)}`);
 	if (total === 0) return L; // drill-in pinned but no agents yet: header only

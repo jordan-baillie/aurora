@@ -1,5 +1,5 @@
-import type { AssistantMessage } from "@earendil-works/pi-ai";
-import { Container, Markdown, type MarkdownTheme, Spacer, Text } from "@earendil-works/pi-tui";
+import type { AssistantMessage } from "@summon/ai";
+import { Container, Markdown, type MarkdownTheme, Spacer, Text } from "@summon/tui";
 import { getMarkdownTheme, theme } from "../theme/theme.ts";
 import { MessageBoxFrame } from "./box-frame.ts";
 import { RoleHeaderComponent } from "./role-divider.ts";
@@ -15,7 +15,7 @@ const OSC133_ZONE_FINAL = "\x1b]133;C\x07";
  *  - "fill"    (dark/light): current behavior — paddingX=1 Markdown, no header.
  *  - "rule"    (editorial):  role-label + hr rule header, then the body.
  *  - "bracket" (brutalist):  --[ pi ]-- header, then the body.
- *  - "box"     (aurora):     full rounded box around the body, accent role label.
+ *  - "box"     (summon):     full rounded box around the body, accent role label.
  */
 export class AssistantMessageComponent extends Container {
 	private contentContainer: Container;
@@ -163,7 +163,7 @@ export class AssistantMessageComponent extends Container {
 			}
 		}
 
-		// Seal the box around the collected body (aurora). The role label lives in the top border.
+		// Seal the box around the collected body (summon). The role label lives in the top border.
 		if (useBox) {
 			this.contentContainer.addChild(
 				new MessageBoxFrame(target, {

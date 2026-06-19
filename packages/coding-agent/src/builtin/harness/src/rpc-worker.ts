@@ -4,7 +4,7 @@
 import { spawn } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
 import { type AgentBundle, assertOAuthRouting, buildSystemPrompt, GUARD_EXT, MODEL, spawnEnv } from "./core.ts";
-import { AGENT_BIN } from "./paths.ts";
+import { agentSpawnCommand } from "./paths.ts";
 import type { PooledWorker } from "./pool.ts";
 
 export interface RpcRunResult {
@@ -52,7 +52,8 @@ export class RpcWorker implements PooledWorker {
 		const env = spawnEnv(opts.root, opts.protected);
 		assertOAuthRouting(env, sys); // $0-OAuth canary: fail-closed before we spawn the rpc worker
 
-		const proc = spawn(AGENT_BIN, args, {
+		const { cmd, prefix } = agentSpawnCommand();
+		const proc = spawn(cmd, [...prefix, ...args], {
 			env,
 			stdio: ["pipe", "pipe", "pipe"],
 		});

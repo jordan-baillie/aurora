@@ -10,9 +10,10 @@
 //   HARNESS_BLUEPRINTS_DIR -> code-defined DAG recipes          (default <root>/blueprints)
 //   HARNESS_THEMES_DIR     -> canonical theme files            (default <root>/themes)
 //
-// Re-export shims (e.g. ~/.pi/agent/extensions/aurora-spawn.ts) resolve to the REAL module
+// Re-export shims (e.g. ~/.summon/agent/extensions/summon-spawn.ts) resolve to the REAL module
 // URL under ESM, so REPO_ROOT stays correct no matter where the shim lives.
 
+import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -26,12 +27,31 @@ export const TEAMS_DIR = process.env.HARNESS_TEAMS_DIR ?? join(REPO_ROOT, "teams
 export const BLUEPRINTS_DIR = process.env.HARNESS_BLUEPRINTS_DIR ?? join(REPO_ROOT, "blueprints");
 export const THEMES_DIR = process.env.HARNESS_THEMES_DIR ?? join(REPO_ROOT, "themes");
 
-// The branded agent binary the harness spawns for sub-agents (env-overridable).
-export const AGENT_BIN = process.env.AURORA_BIN ?? "aurora";
+// The CLI entry the harness self-spawns for sub-agents. Resolved from THIS module's location so it is
+// PATH-INDEPENDENT — it never relies on a `summon`/`.cmd` shim being on PATH (which Node's spawn cannot
+// exec on Windows without a shell). Built `dist/cli.js` in a real install; the `.ts` source under
+// --experimental-strip-types in a dev tree.
+function resolveCliEntry(): string {
+	const here = dirname(fileURLToPath(import.meta.url)); // .../builtin/harness/src
+	const distJs = resolve(here, "..", "..", "..", "cli.js"); // .../dist/cli.js
+	return existsSync(distJs) ? distJs : resolve(here, "..", "..", "..", "cli.ts"); // dev fallback
+}
+const CLI_ENTRY = resolveCliEntry();
 
-// Config/state home (matches the engine: AURORA_CODING_AGENT_DIR / PI_CODING_AGENT_DIR, default ~/.aurora).
-export const CONFIG_HOME =
-	process.env.AURORA_CODING_AGENT_DIR ?? process.env.PI_CODING_AGENT_DIR ?? join(homedir(), ".aurora");
+// Optional explicit override: a command/binary on PATH (advanced). Prefer the PATH-independent default.
+export const AGENT_BIN = process.env.SUMMON_BIN ?? null;
+
+// Cross-platform self-spawn command for a sub-agent. The default routes through the running Node binary
+// (`process.execPath`, a real executable — no .cmd shim resolution needed) + the resolved CLI entry, so
+// it works identically on Windows and POSIX. An explicit SUMMON_BIN override is spawned as-is.
+export function agentSpawnCommand(): { cmd: string; prefix: string[] } {
+	if (AGENT_BIN) return { cmd: AGENT_BIN, prefix: [] };
+	const prefix = CLI_ENTRY.endsWith(".ts") ? ["--experimental-strip-types", CLI_ENTRY] : [CLI_ENTRY];
+	return { cmd: process.execPath, prefix };
+}
+
+// Config/state home (matches the engine: SUMMON_CODING_AGENT_DIR, default ~/.summon).
+export const CONFIG_HOME = process.env.SUMMON_CODING_AGENT_DIR ?? join(homedir(), ".summon");
 // Where the harness writes the generated registry index (the orchestrator's machine-readable roster).
 export const REGISTRY_INDEX = join(CONFIG_HOME, "harness", "registry-index.json");
 // Fleet-level observability (#8): cross-run spawn ledger + the rendered digest.

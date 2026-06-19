@@ -1,6 +1,6 @@
 {
-  "$schema": "https://raw.githubusercontent.com/earendil-works/pi/main/packages/coding-agent/src/modes/interactive/theme/theme-schema.json",
-  "name": "aurora",
+  "$schema": "https://raw.githubusercontent.com/jordan-245/aurora/main/packages/coding-agent/src/modes/interactive/theme/theme-schema.json",
+  "name": "summon",
   "vars": {
     "violet":   "#b69cff",
     "indigo":   "#8b95ff",
@@ -24,11 +24,11 @@
   "gradient": ["violet", "indigo", "cyan", "teal", "fuchsia"],
   "banner": {
     "lines": [
-      "╭──╮  ╷  ╷  ╭──╮  ╭──╮  ╭──╮  ╭──╮",
-      "│  │  │  │  │  │  │  │  │  │  │  │",
-      "├──┤  │  │  ├──╯  │  │  ├──╯  ├──┤",
-      "│  │  │  │  │ ╲   │  │  │ ╲   │  │",
-      "╵  ╵  ╰──╯  ╵  ╲  ╰──╯  ╵  ╲  ╵  ╵"
+      "╭──╮  ╷  ╷  ╭╮╭╮  ╭╮╭╮  ╭──╮  ╷  ╷",
+      "│     │  │  ││││  ││││  │  │  │╲ │",
+      "╰──╮  │  │  │╰╯│  │╰╯│  │  │  │ ╲│",
+      "   │  │  │  │  │  │  │  │  │  │  │",
+      "╰──╯  ╰──╯  ╵  ╵  ╵  ╵  ╰──╯  ╵  ╵"
     ],
     "tagline": "the orchestrated coding agent"
   },
@@ -119,7 +119,7 @@
     "inputAreaStyle": "border-fill",
     "roleLabelStyle": "smallcaps",
     "userRoleLabel": "you",
-    "assistantRoleLabel": "aurora",
+    "assistantRoleLabel": "summon",
     "toolGutter": 2,
     "blankLineBetweenTurns": 1,
     "footerStyle": "single-line",

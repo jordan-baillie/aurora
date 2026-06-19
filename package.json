@@ -1,19 +1,16 @@
 {
-	"name": "pi-monorepo",
+	"name": "summon-monorepo",
 	"private": true,
 	"type": "module",
 	"bin": {
-		"aurora": "packages/coding-agent/dist/cli.js"
+		"summon": "packages/coding-agent/dist/cli.js"
 	},
 	"workspaces": [
-		"packages/*",
-		"packages/coding-agent/examples/extensions/with-deps",
-		"packages/coding-agent/examples/extensions/custom-provider-anthropic",
-		"packages/coding-agent/examples/extensions/custom-provider-gitlab-duo",
-		"packages/coding-agent/examples/extensions/sandbox"
+		"packages/*"
 	],
 	"scripts": {
 		"clean": "npm run clean --workspaces",
+		"setup": "npm install && npm run build && cd packages/coding-agent && npm link",
 		"build": "cd packages/tui && npm run build && cd ../ai && npm run build && cd ../agent && npm run build && cd ../coding-agent && npm run build",
 		"refresh-models": "cd packages/ai && npm run generate-models && npm run generate-image-models",
 		"check": "biome check --write --error-on-warnings . && npm run check:pinned-deps && npm run check:ts-imports && npm run check:shrinkwrap && tsgo --noEmit && npm run check:browser-smoke",
@@ -53,7 +50,7 @@
 	"engines": {
 		"node": ">=22.19.0"
 	},
-	"version": "0.0.3",
+	"version": "0.1.0",
 	"overrides": {
 		"rimraf": "6.1.2",
 		"gaxios": {
