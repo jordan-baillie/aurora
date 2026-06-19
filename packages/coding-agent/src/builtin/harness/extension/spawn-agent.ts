@@ -26,7 +26,7 @@ import { FLEET_LEDGER, FLEET_SUMMARY, REGISTRY_INDEX } from "../src/paths.ts";
 import { drainAllPools, isPrewarmed, pickTransport, prewarm, spawnViaPool } from "../src/pool-transport.ts";
 import { loadTeams, runTeam } from "../src/teams.ts";
 
-export default function harness(pi: ExtensionAPI) {
+export default function harness(summon: ExtensionAPI) {
 	const { reg: registry, maxWeight, protectedList, root } = loadRegistries(process.cwd()); // fail-closed validation at load
 	// Window-aware governor: weighted concurrency cap + Claude-Max rolling-window token tracking.
 	// HARNESS_WINDOW_TOKENS>0 turns on a hard window gate; 0 (default) tracks + surfaces only (no hang).
@@ -41,7 +41,7 @@ export default function harness(pi: ExtensionAPI) {
 	// Boot-time prompt audit (#8 skill-bloat): render each worker's system prompt once and flag any that
 	// exceed the byte threshold — context that costs tokens every spawn without earning it.
 	const bootAudits = [...registry.values()].map((b) => auditPrompt(b.name, buildSystemPrompt(b)));
-	pi.events?.emit?.("agent-event", {
+	summon.events?.emit?.("agent-event", {
 		id: "boot",
 		agent: "harness",
 		ts: Date.now(),
@@ -85,7 +85,7 @@ export default function harness(pi: ExtensionAPI) {
 		const bundles = prewarmNames.map((n) => registry.get(n)!);
 		void prewarm(bundles, { root, protected: protectedList })
 			.then((summary) =>
-				pi.events?.emit?.("agent-event", {
+				summon.events?.emit?.("agent-event", {
 					id: "prewarm",
 					agent: "harness",
 					ts: Date.now(),
@@ -107,7 +107,7 @@ export default function harness(pi: ExtensionAPI) {
 	): Promise<any> {
 		const b = registry.get(agent);
 		if (!b) return { agent, status: "failed", error: `no such agent '${agent}'. have: ${names}` };
-		const emit = (e: any) => pi.events?.emit?.("agent-event", { id: task_id, agent, ts: Date.now(), ...e });
+		const emit = (e: any) => summon.events?.emit?.("agent-event", { id: task_id, agent, ts: Date.now(), ...e });
 		// Resolve transport: explicit wins; otherwise a pre-warmed bundle uses its hot pool, else oneshot.
 		const t = transport ?? (isPrewarmed(agent) ? "pool" : "oneshot");
 		const cacheable = !!cache && isCacheable(b);
@@ -200,7 +200,7 @@ export default function harness(pi: ExtensionAPI) {
 		].join("\n");
 	}
 
-	pi.registerTool({
+	summon.registerTool({
 		name: "spawn_agent",
 		label: "Spawn specialised sub-agent",
 		description: `Delegate ONE task to a specialised sub-agent; returns its result + output-contract verdict. You write the metaprompt (ROLE/TASK/SCOPE/INPUTS/TOOLS/ACCEPTANCE/TERMINAL/DO-NOT).\nRegistry (name[tier; tools; ->contract]): ${digest}\nFull index: ${indexPath}`,
@@ -269,7 +269,7 @@ export default function harness(pi: ExtensionAPI) {
 		},
 	});
 
-	pi.registerTool({
+	summon.registerTool({
 		name: "run_team",
 		label: "Run a named team (sequential stages, parallel steps)",
 		description: `Run a named team recipe — stages run sequentially, steps within a stage run in parallel. Available teams are loaded from global + project-local .summon/teams/ directories.`,
@@ -326,7 +326,7 @@ export default function harness(pi: ExtensionAPI) {
 		}
 	}
 
-	pi.registerTool({
+	summon.registerTool({
 		name: "run_blueprint",
 		label: "Run a code-defined DAG (deterministic code + scoped agent nodes)",
 		description:
@@ -382,7 +382,7 @@ export default function harness(pi: ExtensionAPI) {
 		},
 	});
 
-	pi.registerTool({
+	summon.registerTool({
 		name: "spawn_agents",
 		label: "Spawn sub-agents in parallel",
 		description: `Run MULTIPLE specialised sub-agents CONCURRENTLY (wide fan-out) — use for independent tasks. Independent tasks run concurrently; a pre-warmed agent always uses its hot pool, and same-agent batches of ≥8 auto-use the warm worker pool (≈30-47% faster), else cold one-shot. Override with transport.\nRegistry: ${digest}`,
@@ -423,7 +423,7 @@ export default function harness(pi: ExtensionAPI) {
 	});
 
 	// On shutdown: drain warm pools (no orphaned rpc procs) and write the cross-run fleet digest (#8).
-	pi.on?.("session_shutdown", async () => {
+	summon.on?.("session_shutdown", async () => {
 		await drainAllPools();
 		try {
 			writeFileSync(FLEET_SUMMARY, fleetDigest(aggregateFleet(readFleet(FLEET_LEDGER))));

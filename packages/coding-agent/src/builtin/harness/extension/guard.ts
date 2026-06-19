@@ -20,8 +20,8 @@ function parseProtected(raw: string | undefined): string[] {
 }
 const PROTECTED = parseProtected(process.env.HARNESS_PROTECTED);
 
-export default function guard(pi: ExtensionAPI) {
-	pi.on("tool_call", async (event: any) => {
+export default function guard(summon: ExtensionAPI) {
+	summon.on("tool_call", async (event: any) => {
 		const name = event.toolName;
 		const input = event.input ?? event.args ?? {};
 

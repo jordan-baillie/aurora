@@ -360,7 +360,6 @@ ${chalk.bold("Environment Variables:")}
   SUMMON_TELEMETRY                     - Override install telemetry when set to 1/true/yes or 0/false/no
   SUMMON_THEME                         - Theme to use (e.g. SUMMON_THEME=editorial). Overrides settings.json,
                                      lower precedence than --theme flag.
-  SUMMON_SHARE_VIEWER_URL              - Base URL for /share command (default: https://pi.dev/session/)
 
 ${chalk.bold("Built-in Tool Names:")}
   read   - Read file contents

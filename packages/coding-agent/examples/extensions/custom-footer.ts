@@ -12,10 +12,10 @@ import type { AssistantMessage } from "@summon/ai";
 import type { ExtensionAPI } from "@summon/coding-agent";
 import { truncateToWidth, visibleWidth } from "@summon/tui";
 
-export default function (pi: ExtensionAPI) {
+export default function (summon: ExtensionAPI) {
 	let enabled = false;
 
-	pi.registerCommand("footer", {
+	summon.registerCommand("footer", {
 		description: "Toggle custom footer",
 		handler: async (_args, ctx) => {
 			enabled = !enabled;

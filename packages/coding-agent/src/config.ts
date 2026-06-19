@@ -416,11 +416,6 @@ export function getExamplesPath(): string {
 	return resolve(join(getPackageDir(), "examples"));
 }
 
-/** Get path to CHANGELOG.md */
-export function getChangelogPath(): string {
-	return resolve(join(getPackageDir(), "CHANGELOG.md"));
-}
-
 /**
  * Get path to built-in interactive assets directory.
  * - For Bun binary: assets/ next to executable
@@ -469,14 +464,6 @@ export const ENV_SESSION_DIR = `${APP_NAME.toUpperCase()}_CODING_AGENT_SESSION_D
 
 export function expandTildePath(path: string): string {
 	return normalizePath(path);
-}
-
-const DEFAULT_SHARE_VIEWER_URL = "https://pi.dev/session/";
-
-/** Get the share viewer URL for a gist ID */
-export function getShareViewerUrl(gistId: string): string {
-	const baseUrl = process.env.SUMMON_SHARE_VIEWER_URL || DEFAULT_SHARE_VIEWER_URL;
-	return `${baseUrl}#${gistId}`;
 }
 
 // =============================================================================

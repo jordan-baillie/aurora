@@ -13,13 +13,13 @@ import type { ExtensionAPI, ExtensionContext } from "@summon/coding-agent";
 
 const BRAILLE_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
-function getBaseTitle(pi: ExtensionAPI): string {
+function getBaseTitle(summon: ExtensionAPI): string {
 	const cwd = path.basename(process.cwd());
-	const session = pi.getSessionName();
+	const session = summon.getSessionName();
 	return session ? `π - ${session} - ${cwd}` : `π - ${cwd}`;
 }
 
-export default function (pi: ExtensionAPI) {
+export default function (summon: ExtensionAPI) {
 	let timer: ReturnType<typeof setInterval> | null = null;
 	let frameIndex = 0;
 
@@ -29,7 +29,7 @@ export default function (pi: ExtensionAPI) {
 			timer = null;
 		}
 		frameIndex = 0;
-		ctx.ui.setTitle(getBaseTitle(pi));
+		ctx.ui.setTitle(getBaseTitle(summon));
 	}
 
 	function startAnimation(ctx: ExtensionContext) {
@@ -37,22 +37,22 @@ export default function (pi: ExtensionAPI) {
 		timer = setInterval(() => {
 			const frame = BRAILLE_FRAMES[frameIndex % BRAILLE_FRAMES.length];
 			const cwd = path.basename(process.cwd());
-			const session = pi.getSessionName();
+			const session = summon.getSessionName();
 			const title = session ? `${frame} π - ${session} - ${cwd}` : `${frame} π - ${cwd}`;
 			ctx.ui.setTitle(title);
 			frameIndex++;
 		}, 80);
 	}
 
-	pi.on("agent_start", async (_event, ctx) => {
+	summon.on("agent_start", async (_event, ctx) => {
 		startAnimation(ctx);
 	});
 
-	pi.on("agent_end", async (_event, ctx) => {
+	summon.on("agent_end", async (_event, ctx) => {
 		stopAnimation(ctx);
 	});
 
-	pi.on("session_shutdown", async (_event, ctx) => {
+	summon.on("session_shutdown", async (_event, ctx) => {
 		stopAnimation(ctx);
 	});
 }

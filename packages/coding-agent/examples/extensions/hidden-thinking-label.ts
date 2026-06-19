@@ -22,18 +22,18 @@ import type { ExtensionAPI, ExtensionContext } from "@summon/coding-agent";
 
 const DEFAULT_LABEL = "Pondering...";
 
-export default function (pi: ExtensionAPI) {
+export default function (summon: ExtensionAPI) {
 	let label = DEFAULT_LABEL;
 
 	const applyLabel = (ctx: ExtensionContext) => {
 		ctx.ui.setHiddenThinkingLabel(label);
 	};
 
-	pi.on("session_start", async (_event, ctx) => {
+	summon.on("session_start", async (_event, ctx) => {
 		applyLabel(ctx);
 	});
 
-	pi.registerCommand("thinking-label", {
+	summon.registerCommand("thinking-label", {
 		description: "Set the hidden thinking label. Use without args to reset.",
 		handler: async (args, ctx) => {
 			const nextLabel = args.trim();

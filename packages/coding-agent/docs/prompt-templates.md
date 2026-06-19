@@ -10,7 +10,7 @@ Summon loads prompt templates from:
 
 - Global: `~/.summon/agent/prompts/*.md`
 - Project: `.summon/prompts/*.md`
-- Packages: `prompts/` directories or `pi.prompts` entries in `package.json`
+- Packages: `prompts/` directories or `summon.prompts` entries in `package.json`
 - Settings: `prompts` array with files or directories
 - CLI: `--prompt-template <path>` (repeatable)
 

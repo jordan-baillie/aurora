@@ -5,7 +5,7 @@ import type { ExtensionAPI } from "../../../index.ts";
 import { emptyVM, isAnimating, reduce, renderFooter, renderWidget, setExpanded } from "../src/observe.ts";
 import { createWebSurface, getWebToken, type WebSurface } from "../src/web-surface.ts";
 
-export default function observe(pi: ExtensionAPI) {
+export default function observe(summon: ExtensionAPI) {
 	const vm = emptyVM();
 	let tuiRef: any;
 	let timer: any;
@@ -66,7 +66,7 @@ export default function observe(pi: ExtensionAPI) {
 		timer = undefined;
 		tuiRef?.requestRender?.();
 	};
-	pi.events?.on?.("agent-event", (e: any) => {
+	summon.events?.on?.("agent-event", (e: any) => {
 		reduce(vm, e);
 		surface?.push(e); // feed the session-local surface if /harness-web is running
 		forward(e); // feed the persistent service if running
@@ -75,7 +75,7 @@ export default function observe(pi: ExtensionAPI) {
 	});
 
 	// Phase 5 — /harness-web command: start/stop the HTTP+SSE dashboard.
-	pi.registerCommand?.("harness-web", {
+	summon.registerCommand?.("harness-web", {
 		description: "Start/stop the harness web dashboard. Args: <port> | off (default: start on an ephemeral port).",
 		handler: async (args: string, ctx: any) => {
 			const a = (args ?? "").trim();
@@ -104,7 +104,7 @@ export default function observe(pi: ExtensionAPI) {
 		},
 	});
 
-	pi.registerCommand?.("harness-drill", {
+	summon.registerCommand?.("harness-drill", {
 		description: "Drill into a harness agent's tool timeline. Args: <agentId> | next | off (default: next).",
 		handler: async (args: string, ctx: any) => {
 			setExpanded(vm, (args ?? "").trim() || "next");
@@ -113,7 +113,7 @@ export default function observe(pi: ExtensionAPI) {
 		},
 	});
 
-	pi.on("session_start", async (_e: any, ctx: any) => {
+	summon.on("session_start", async (_e: any, ctx: any) => {
 		// TUI-only surface. Newer pi (≥0.79) reports ctx.mode ("tui"|"rpc"|"json"|"print"); the older
 		// dev binary (pi-mono@tui-refresh-editorial, 0.75.5) has NO ctx.mode and only ever runs this in its
 		// interactive TUI. So bail only when a mode IS reported and it isn't "tui"; when no mode is reported
@@ -133,7 +133,7 @@ export default function observe(pi: ExtensionAPI) {
 		startAnim(); // live panel comes alive (spinner + shimmer) only when agents are delegated
 	});
 
-	pi.on("session_shutdown", async (_e: any, ctx: any) => {
+	summon.on("session_shutdown", async (_e: any, ctx: any) => {
 		stopAnim();
 		await surface?.close();
 		surface = undefined;
