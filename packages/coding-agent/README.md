@@ -1,5 +1,5 @@
 <p align="center">
-  <a href="https://github.com/jordan-baillie/aurora">
+  <a href="https://github.com/jordan-baillie/summon">
     <img alt="Summon logo" src="docs/images/exy.png" width="128">
   </a>
 </p>
@@ -64,7 +64,7 @@ npm install -g --ignore-scripts @summon/coding-agent
 Install from source:
 
 ```bash
-git clone https://github.com/jordan-baillie/aurora.git summon
+git clone https://github.com/jordan-baillie/summon.git summon
 ```
 
 Authenticate with your Claude subscription (default). Start Summon, then run the `/login` slash command inside the app and select your provider:

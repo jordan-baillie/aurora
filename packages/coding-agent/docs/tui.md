@@ -4,7 +4,7 @@
 
 Extensions and custom tools can render custom TUI components for interactive user interfaces. This page covers the component system and available building blocks.
 
-**Source:** [`@summon/tui`](https://github.com/jordan-baillie/aurora/tree/main/packages/tui)
+**Source:** [`@summon/tui`](https://github.com/jordan-baillie/summon/tree/main/packages/tui)
 
 ## Component Interface
 

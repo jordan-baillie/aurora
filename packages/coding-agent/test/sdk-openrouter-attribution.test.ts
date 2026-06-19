@@ -152,7 +152,7 @@ describe("createAgentSession OpenRouter attribution headers", () => {
 			telemetryEnabled: true,
 		});
 
-		expect(headers?.["HTTP-Referer"]).toBe("https://github.com/jordan-baillie/aurora");
+		expect(headers?.["HTTP-Referer"]).toBe("https://github.com/jordan-baillie/summon");
 		expect(headers?.["X-OpenRouter-Title"]).toBe("summon");
 		expect(headers?.["X-OpenRouter-Categories"]).toBe("cli-agent");
 	});
@@ -172,7 +172,7 @@ describe("createAgentSession OpenRouter attribution headers", () => {
 			telemetryEnabled: true,
 		});
 
-		expect(headers?.["HTTP-Referer"]).toBe("https://github.com/jordan-baillie/aurora");
+		expect(headers?.["HTTP-Referer"]).toBe("https://github.com/jordan-baillie/summon");
 		expect(headers?.["X-OpenRouter-Title"]).toBe("summon");
 		expect(headers?.["X-OpenRouter-Categories"]).toBe("cli-agent");
 	});

@@ -251,15 +251,15 @@ Content`,
 			expect(result.prompts.some((r) => r.path === promptPath && !r.enabled)).toBe(true);
 		});
 
-		it("should resolve directory with package.json pi.extensions in extensions setting", async () => {
-			// Create a package with pi.extensions in package.json
+		it("should resolve directory with package.json summon.extensions in extensions setting", async () => {
+			// Create a package with summon.extensions in package.json
 			const pkgDir = join(tempDir, "my-extensions-pkg");
 			mkdirSync(join(pkgDir, "extensions"), { recursive: true });
 			writeFileSync(
 				join(pkgDir, "package.json"),
 				JSON.stringify({
 					name: "my-extensions-pkg",
-					pi: {
+					summon: {
 						extensions: ["./extensions/clip.ts", "./extensions/cost.ts"],
 					},
 				}),
@@ -273,7 +273,7 @@ Content`,
 
 			const result = await packageManager.resolve();
 
-			// Should find the extensions declared in package.json pi.extensions
+			// Should find the extensions declared in package.json summon.extensions
 			expect(result.extensions.some((r) => r.path === join(pkgDir, "extensions", "clip.ts") && r.enabled)).toBe(
 				true,
 			);
@@ -558,14 +558,14 @@ Content`,
 			expect(result.extensions.some((r) => r.path === extPath && r.enabled)).toBe(true);
 		});
 
-		it("should handle directories with pi manifest", async () => {
+		it("should handle directories with summon manifest", async () => {
 			const pkgDir = join(tempDir, "my-package");
 			mkdirSync(pkgDir, { recursive: true });
 			writeFileSync(
 				join(pkgDir, "package.json"),
 				JSON.stringify({
 					name: "my-package",
-					pi: {
+					summon: {
 						extensions: ["./src/index.ts"],
 						skills: ["./skills"],
 					},
@@ -587,7 +587,7 @@ Content`,
 			);
 		});
 
-		it("should keep pi manifest entries with leading tilde package-relative", async () => {
+		it("should keep summon manifest entries with leading tilde package-relative", async () => {
 			const pkgDir = join(tempDir, "tilde-manifest-package");
 			const directExtensionPath = join(pkgDir, "~extensions", "main.ts");
 			const slashExtensionPath = join(pkgDir, "~", "extensions", "alt.ts");
@@ -606,7 +606,7 @@ Content`,
 				join(pkgDir, "package.json"),
 				JSON.stringify({
 					name: "tilde-manifest-package",
-					pi: {
+					summon: {
 						extensions: ["~extensions/main.ts", "~/extensions/alt.ts"],
 						skills: ["~skills", "~/skills"],
 					},
@@ -1410,7 +1410,7 @@ Content`,
 		});
 	});
 
-	describe("pattern filtering in pi manifest", () => {
+	describe("pattern filtering in summon manifest", () => {
 		it("should support glob patterns in manifest extensions", async () => {
 			const pkgDir = join(tempDir, "manifest-pkg");
 			mkdirSync(join(pkgDir, "extensions"), { recursive: true });
@@ -1422,7 +1422,7 @@ Content`,
 				join(pkgDir, "package.json"),
 				JSON.stringify({
 					name: "manifest-pkg",
-					pi: {
+					summon: {
 						extensions: ["extensions", "node_modules/dep/extensions", "!**/skip.ts"],
 					},
 				}),
@@ -1450,7 +1450,7 @@ Content`,
 				join(pkgDir, "package.json"),
 				JSON.stringify({
 					name: "skill-manifest-pkg",
-					pi: {
+					summon: {
 						skills: ["skills", "!**/bad-skill"],
 					},
 				}),
@@ -1477,7 +1477,7 @@ Content`,
 				join(pkgDir, "package.json"),
 				JSON.stringify({
 					name: "skill-manifest-glob-pkg",
-					pi: {
+					summon: {
 						skills: ["./plugins/*/skills"],
 					},
 				}),
@@ -1502,7 +1502,7 @@ Content`,
 				join(pkgDir, "package.json"),
 				JSON.stringify({
 					name: "layered-pkg",
-					pi: {
+					summon: {
 						extensions: ["extensions", "!**/baz.ts"],
 					},
 				}),
@@ -1706,7 +1706,7 @@ Content`,
 				join(pkgDir, "package.json"),
 				JSON.stringify({
 					name: "manifest-force-pkg",
-					pi: {
+					summon: {
 						extensions: ["extensions", "!**/two.ts", "+extensions/two.ts"],
 					},
 				}),
@@ -1928,7 +1928,7 @@ export default function(api) { api.registerTool({ name: "test", description: "te
 			expect(result.extensions.some((r) => pathEndsWith(r.path, "agents.ts"))).toBe(false);
 		});
 
-		it("should respect package.json pi.extensions manifest in subdirectories", async () => {
+		it("should respect package.json summon.extensions manifest in subdirectories", async () => {
 			const pkgDir = join(tempDir, "manifest-subdir-pkg");
 			mkdirSync(join(pkgDir, "extensions", "custom"), { recursive: true });
 
@@ -1936,7 +1936,7 @@ export default function(api) { api.registerTool({ name: "test", description: "te
 			writeFileSync(
 				join(pkgDir, "extensions", "custom", "package.json"),
 				JSON.stringify({
-					pi: {
+					summon: {
 						extensions: ["./main.ts"],
 					},
 				}),

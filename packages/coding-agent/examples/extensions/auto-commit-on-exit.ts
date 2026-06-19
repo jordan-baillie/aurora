@@ -36,7 +36,7 @@ export default function (summon: ExtensionAPI) {
 
 		// Generate a simple commit message
 		const firstLine = lastAssistantText.split("\n")[0] || "Work in progress";
-		const commitMessage = `[pi] ${firstLine.slice(0, 50)}${firstLine.length > 50 ? "..." : ""}`;
+		const commitMessage = `[summon] ${firstLine.slice(0, 50)}${firstLine.length > 50 ? "..." : ""}`;
 
 		// Stage and commit
 		await summon.exec("git", ["add", "-A"]);

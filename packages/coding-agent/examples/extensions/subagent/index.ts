@@ -1,7 +1,7 @@
 /**
  * Subagent Tool - Delegate tasks to specialized agents
  *
- * Spawns a separate `pi` process for each subagent invocation,
+ * Spawns a separate `summon` process for each subagent invocation,
  * giving it an isolated context window.
  *
  * Supports three modes:
@@ -240,7 +240,7 @@ async function writePromptToTempFile(agentName: string, prompt: string): Promise
 	return { dir: tmpDir, filePath };
 }
 
-function getPiInvocation(args: string[]): { command: string; args: string[] } {
+function getSummonInvocation(args: string[]): { command: string; args: string[] } {
 	const currentScript = process.argv[1];
 	const isBunVirtualScript = currentScript?.startsWith("/$bunfs/root/");
 	if (currentScript && !isBunVirtualScript && fs.existsSync(currentScript)) {
@@ -253,7 +253,7 @@ function getPiInvocation(args: string[]): { command: string; args: string[] } {
 		return { command: process.execPath, args };
 	}
 
-	return { command: "pi", args };
+	return { command: "summon", args };
 }
 
 type OnUpdateCallback = (partial: AgentToolResult<SubagentDetails>) => void;
@@ -325,7 +325,7 @@ async function runSingleAgent(
 		let wasAborted = false;
 
 		const exitCode = await new Promise<number>((resolve) => {
-			const invocation = getPiInvocation(args);
+			const invocation = getSummonInvocation(args);
 			const proc = spawn(invocation.command, invocation.args, {
 				cwd: cwd ?? defaultCwd,
 				shell: false,

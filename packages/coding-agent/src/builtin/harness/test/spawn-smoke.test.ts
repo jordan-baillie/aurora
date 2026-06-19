@@ -1,6 +1,6 @@
 // Integration smoke — prove the harness can actually LAUNCH a sub-agent subprocess on THIS platform.
-// Regression guard for the Windows C1 bug: the harness used to `spawn("aurora", …)`, which ENOENTs
-// against the `aurora.cmd`/`summon.cmd` npm shim because Node cannot exec a `.cmd` without a shell.
+// Regression guard for the Windows C1 bug: the harness used to `spawn("summon", …)`, which ENOENTs
+// against the `summon.cmd` npm shim because Node cannot exec a `.cmd` without a shell.
 // agentSpawnCommand() now self-spawns via the Node runtime + the resolved CLI entry, so a real launch
 // works without any PATH shim. We invoke `--version` (no auth, no network) and assert it runs.
 //   node --experimental-strip-types --test test/spawn-smoke.test.ts

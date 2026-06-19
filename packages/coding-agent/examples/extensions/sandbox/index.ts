@@ -30,8 +30,8 @@
  * ```
  *
  * Usage:
- * - `pi -e ./sandbox` - sandbox enabled with default/config settings
- * - `pi -e ./sandbox --no-sandbox` - disable sandboxing
+ * - `summon -e ./sandbox` - sandbox enabled with default/config settings
+ * - `summon -e ./sandbox --no-sandbox` - disable sandboxing
  * - `/sandbox` - show current sandbox configuration
  *
  * Setup:

@@ -3,7 +3,7 @@
 	"version": "0.1.0",
 	"description": "Summon — a branded agent harness: a coding agent with a built-in specialised-sub-agent delegation harness (spawn_agent) and the summon neon TUI.",
 	"type": "module",
-	"piConfig": {
+	"summonConfig": {
 		"name": "summon",
 		"configDir": ".summon"
 	},
@@ -85,7 +85,7 @@
 	"license": "MIT",
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/jordan-baillie/aurora.git",
+		"url": "git+https://github.com/jordan-baillie/summon.git",
 		"directory": "packages/coding-agent"
 	},
 	"engines": {

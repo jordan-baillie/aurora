@@ -2,16 +2,16 @@
  * Shutdown Command Extension
  *
  * Adds a /quit command that allows extensions to trigger clean shutdown.
- * Demonstrates how extensions can use ctx.shutdown() to exit pi cleanly.
+ * Demonstrates how extensions can use ctx.shutdown() to exit summon cleanly.
  */
 
 import type { ExtensionAPI } from "@summon/coding-agent";
 import { Type } from "typebox";
 
 export default function (summon: ExtensionAPI) {
-	// Register a /quit command that cleanly exits pi
+	// Register a /quit command that cleanly exits summon
 	summon.registerCommand("quit", {
-		description: "Exit pi cleanly",
+		description: "Exit summon cleanly",
 		handler: async (_args, ctx) => {
 			ctx.shutdown();
 		},
@@ -21,7 +21,7 @@ export default function (summon: ExtensionAPI) {
 	summon.registerTool({
 		name: "finish_and_exit",
 		label: "Finish and Exit",
-		description: "Complete a task and exit pi",
+		description: "Complete a task and exit summon",
 		parameters: Type.Object({}),
 		async execute(_toolCallId, _params, _signal, _onUpdate, ctx) {
 			// Do any final work here...
@@ -40,7 +40,7 @@ export default function (summon: ExtensionAPI) {
 	summon.registerTool({
 		name: "deploy_and_exit",
 		label: "Deploy and Exit",
-		description: "Deploy the application and exit pi",
+		description: "Deploy the application and exit summon",
 		parameters: Type.Object({
 			environment: Type.String({ description: "Target environment (e.g., production, staging)" }),
 		}),

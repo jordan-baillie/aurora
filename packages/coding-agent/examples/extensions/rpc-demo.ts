@@ -25,7 +25,7 @@ export default function (summon: ExtensionAPI) {
 	// -- setTitle, setWidget, setStatus on session lifecycle --
 
 	summon.on("session_start", async (event, ctx) => {
-		ctx.ui.setTitle(event.reason === "new" ? "pi RPC Demo (new session)" : "pi RPC Demo");
+		ctx.ui.setTitle(event.reason === "new" ? "summon RPC Demo (new session)" : "summon RPC Demo");
 		ctx.ui.setWidget("rpc-demo", ["--- RPC Extension UI Demo ---", "Loaded and ready."]);
 		ctx.ui.setStatus("rpc-demo", `Turns: ${turnCount}`);
 	});

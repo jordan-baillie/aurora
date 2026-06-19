@@ -427,19 +427,22 @@ export async function loadExtensions(paths: string[], cwd: string, eventBus?: Ev
 	};
 }
 
-interface PiManifest {
+interface SummonManifest {
 	extensions?: string[];
 	themes?: string[];
 	skills?: string[];
 	prompts?: string[];
 }
 
-function readPiManifest(packageJsonPath: string): PiManifest | null {
+function readSummonManifest(packageJsonPath: string): SummonManifest | null {
 	try {
 		const content = fs.readFileSync(packageJsonPath, "utf-8");
 		const pkg = JSON.parse(content);
-		if (pkg.pi && typeof pkg.pi === "object") {
-			return pkg.pi as PiManifest;
+		// Canonical manifest key is `summon`; `pi` is still read for backward compatibility
+		// with extensions authored against the upstream Pi convention.
+		const manifest = pkg.summon ?? pkg.pi;
+		if (manifest && typeof manifest === "object") {
+			return manifest as SummonManifest;
 		}
 		return null;
 	} catch {
@@ -455,16 +458,16 @@ function isExtensionFile(name: string): boolean {
  * Resolve extension entry points from a directory.
  *
  * Checks for:
- * 1. package.json with "pi.extensions" field -> returns declared paths
+ * 1. package.json with "summon.extensions" field (or legacy "pi") -> returns declared paths
  * 2. index.ts or index.js -> returns the index file
  *
  * Returns resolved paths or null if no entry points found.
  */
 function resolveExtensionEntries(dir: string): string[] | null {
-	// Check for package.json with "pi" field first
+	// Check for package.json with "summon" field first (legacy "pi" still accepted)
 	const packageJsonPath = path.join(dir, "package.json");
 	if (fs.existsSync(packageJsonPath)) {
-		const manifest = readPiManifest(packageJsonPath);
+		const manifest = readSummonManifest(packageJsonPath);
 		if (manifest?.extensions?.length) {
 			const entries: string[] = [];
 			for (const extPath of manifest.extensions) {
@@ -498,7 +501,7 @@ function resolveExtensionEntries(dir: string): string[] | null {
  * Discovery rules:
  * 1. Direct files: `extensions/*.ts` or `*.js` → load
  * 2. Subdirectory with index: `extensions/* /index.ts` or `index.js` → load
- * 3. Subdirectory with package.json: `extensions/* /package.json` with "pi" field → load what it declares
+ * 3. Subdirectory with package.json: `extensions/* /package.json` with "summon" field → load what it declares
  *
  * No recursion beyond one level. Complex packages must use package.json manifest.
  */
@@ -572,7 +575,7 @@ export async function discoverAndLoadExtensions(
 	for (const p of configuredPaths) {
 		const resolved = resolvePath(p, resolvedCwd, { normalizeUnicodeSpaces: true });
 		if (fs.existsSync(resolved) && fs.statSync(resolved).isDirectory()) {
-			// Check for package.json with pi manifest or index.ts
+			// Check for package.json with summon manifest or index.ts
 			const entries = resolveExtensionEntries(resolved);
 			if (entries) {
 				addPaths(entries);

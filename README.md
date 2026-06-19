@@ -24,7 +24,7 @@ gradient `SUMMON` wordmark, rounded box tool-cards, bordered messages, breathing
 Requires **Node ≥ 22** and **npm ≥ 10**.
 
 ```bash
-git clone https://github.com/jordan-baillie/aurora.git summon
+git clone https://github.com/jordan-baillie/summon.git summon
 cd summon
 npm run setup            # install + build + put `summon` on your PATH
 ```

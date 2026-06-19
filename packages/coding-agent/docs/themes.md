@@ -21,7 +21,7 @@ Summon loads themes from:
 - Built-in: `dark`, `light`
 - Global: `~/.summon/agent/themes/*.json`
 - Project: `.summon/themes/*.json`
-- Packages: `themes/` directories or `pi.themes` entries in `package.json`
+- Packages: `themes/` directories or `summon.themes` entries in `package.json`
 - Settings: `themes` array with files or directories
 - CLI: `--theme <path>` (repeatable)
 
@@ -52,7 +52,7 @@ vim ~/.summon/agent/themes/my-theme.json
 
 ```json
 {
-  "$schema": "https://raw.githubusercontent.com/jordan-baillie/aurora/main/packages/coding-agent/src/modes/interactive/theme/theme-schema.json",
+  "$schema": "https://raw.githubusercontent.com/jordan-baillie/summon/main/packages/coding-agent/src/modes/interactive/theme/theme-schema.json",
   "name": "my-theme",
   "vars": {
     "primary": "#00aaff",
@@ -122,7 +122,7 @@ vim ~/.summon/agent/themes/my-theme.json
 
 ```json
 {
-  "$schema": "https://raw.githubusercontent.com/jordan-baillie/aurora/main/packages/coding-agent/src/modes/interactive/theme/theme-schema.json",
+  "$schema": "https://raw.githubusercontent.com/jordan-baillie/summon/main/packages/coding-agent/src/modes/interactive/theme/theme-schema.json",
   "name": "my-theme",
   "vars": {
     "blue": "#0066cc",

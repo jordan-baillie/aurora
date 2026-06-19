@@ -296,7 +296,7 @@ export function getSelfUpdateUnavailableInstruction(
 ): string {
 	const method = detectInstallMethod();
 	if (method === "bun-binary") {
-		return `Download from: https://github.com/jordan-baillie/aurora/releases/latest`;
+		return `Download from: https://github.com/jordan-baillie/summon/releases/latest`;
 	}
 	const command = getSelfUpdateCommandForMethod(method, packageName, updatePackageName, npmCommand);
 	if (command) {
@@ -437,25 +437,29 @@ export function getBundledInteractiveAssetPath(name: string): string {
 }
 
 // =============================================================================
-// App Config (from package.json piConfig)
+// App Config (from package.json summonConfig; legacy `piConfig` still accepted)
 // =============================================================================
+
+interface AppConfig {
+	name?: string;
+	configDir?: string;
+}
 
 interface PackageJson {
 	name?: string;
 	version?: string;
-	piConfig?: {
-		name?: string;
-		configDir?: string;
-	};
+	summonConfig?: AppConfig;
+	piConfig?: AppConfig;
 }
 
 const pkg = JSON.parse(readFileSync(getPackageJsonPath(), "utf-8")) as PackageJson;
 
-const piConfigName: string | undefined = pkg.piConfig?.name;
+const appConfig: AppConfig | undefined = pkg.summonConfig ?? pkg.piConfig;
+const appConfigName: string | undefined = appConfig?.name;
 export const PACKAGE_NAME: string = pkg.name || "@summon/coding-agent";
-export const APP_NAME: string = piConfigName || "pi";
-export const APP_TITLE: string = piConfigName ? APP_NAME : "π";
-export const CONFIG_DIR_NAME: string = pkg.piConfig?.configDir || ".summon";
+export const APP_NAME: string = appConfigName || "pi";
+export const APP_TITLE: string = appConfigName ? APP_NAME : "π";
+export const CONFIG_DIR_NAME: string = appConfig?.configDir || ".summon";
 export const VERSION: string = pkg.version || "0.0.0";
 
 // e.g., SUMMON_CODING_AGENT_DIR or TAU_CODING_AGENT_DIR
