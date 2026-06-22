@@ -474,8 +474,8 @@ per-operator. **No flag becomes default-on in this roadmap** — that's a separa
 |------|---------|--------|
 | `HARNESS_WINDOW_RESERVE` | off | reserved tokens count toward the window gate (else surfaced only) |
 | `HARNESS_POOL_MIN` / `HARNESS_POOL_MAX` | `=POOL_SIZE` | elastic band; `MIN=0` ⇒ scale-to-zero |
-| `HARNESS_AUTOSCALE` | off | arm FleetController (observe-only) |
-| `HARNESS_AUTOSCALE_ACT` | off | enable actuation |
+| `HARNESS_AUTOSCALE` | **observe-only ON** (`=0` to disable) | arm FleetController telemetry (never mutates pools) |
+| `HARNESS_AUTOSCALE_ACT` | off | enable actuation (resize pools + load-shed) |
 | `HARNESS_AUTOSCALE_TICK_MS` / `_MAX` / `_SHED_PCT` | 2000 / 16 / 90 | controller tuning |
 | `HARNESS_SCALE` | `auto` | `auto\|eco\|turbo\|fixed:N` |
 | `HARNESS_GAUGE` | on | governor-gauge kill-switch |
@@ -558,8 +558,14 @@ two layers — deterministic guards (CI-safe, exit non-zero on regression, wired
   queued + speculative_slot, 0, cap)`, prewarm on cold start, precise shrink+reap on drain, cooldown
   suppresses thrash. Real observe-only run over the live pool: targets tracked actual occupancy
   (busy 8 ⇒ target 8, drained precisely), no oscillation.
-- **B3 — defaults stay OFF.** The gate is satisfied, but per the operator directive a single real run
-  is a data point, not a mandate; flipping any flag to default-on is a **separate explicit decision**,
-  not taken here. Recommended graduation path once an operator signs off: `HARNESS_SCALE=auto` (visual)
-  → `HARNESS_AUTOSCALE=1` (observe-only on the operator's real workload) → `HARNESS_AUTOSCALE_ACT=1`.
-  Nothing in this change enables any of them by default.
+- **B3 — observe-only graduated to default-on (operator decision, 2026-06-22).** With B1/B2 passed,
+  the first graduation step is taken: `HARNESS_AUTOSCALE` now defaults to **observe-only ON**
+  (`HARNESS_AUTOSCALE !== "0"`). Observe-only emits fleet telemetry + powers the dashboard fleet panel
+  but **never** mutates pools, sheds load, or changes transport routing — spawn behaviour is
+  byte-for-byte unchanged, so this is a pure-observability default. Opt out with `HARNESS_AUTOSCALE=0`.
+  - **Jitter guard (required for the flip):** the controller now drops all-hold/all-zero ticks, so an
+    idle session emits nothing and the observe extension never repaints when idle — the idle-jutter
+    invariant holds under the new default (covered by an e2e idle-silence test).
+  - **Actuation stays OPT-IN.** `HARNESS_AUTOSCALE_ACT=1` (pool resize + load-shed) remains off by
+    default; graduating it is the next explicit decision, to be taken after observe-only telemetry from
+    real workloads (now collected by default) confirms the targets in production.

@@ -112,6 +112,32 @@ test("e2e spawn_agent: drives the fake CLI subprocess and returns a done result"
 	}
 });
 
+// ── observe-only autoscaler is ON BY DEFAULT (B3) and must stay byte-silent when idle ───────────
+
+test("e2e observe-only default: idle emits NO autoscale events (jitter-safe); demand surfaces them", async () => {
+	delete process.env.HARNESS_AUTOSCALE; // default ⇒ observe-only ON
+	delete process.env.HARNESS_AUTOSCALE_ACT; // actuation stays OFF
+	process.env.HARNESS_AUTOSCALE_TICK_MS = "25"; // fast ticks so several elapse during the test
+	const { api, tools, events, runShutdown } = makeSummon();
+	harness(api);
+	try {
+		await new Promise((r) => setTimeout(r, 150)); // ~6 idle ticks
+		assert.equal(
+			events.filter((e) => e.t === "autoscale").length,
+			0,
+			"idle controller must stay byte-silent (no no-op ticks ⇒ no idle repaint/jitter)",
+		);
+		await tools.get("spawn_agent").execute("id", { agent: "tester", prompt: "work" }, null, null, ctx);
+		assert.ok(
+			events.filter((e) => e.t === "autoscale").length >= 1,
+			"real demand surfaces fleet telemetry (the observe-only default earns its keep)",
+		);
+	} finally {
+		delete process.env.HARNESS_AUTOSCALE_TICK_MS;
+		await runShutdown();
+	}
+});
+
 // ── spawn_quorum: K candidates, verify-filter, majority vote ─────────────────────
 
 test("e2e spawn_quorum: 3 identical candidates ⇒ majority winner via vote (no judge)", async () => {

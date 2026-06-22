@@ -166,10 +166,12 @@ export default function harness(summon: ExtensionAPI) {
 			)
 			.catch(() => {});
 	}
-	// ── autoscaler (#3): a demand-driven control loop over the governor + warm pools. Armed only by
-	//    HARNESS_AUTOSCALE=1; observe-only unless HARNESS_AUTOSCALE_ACT=1 (then it resizes pools). With
-	//    both unset the controller is never constructed and runOne behaves byte-for-byte as before. ──
-	const AUTOSCALE = process.env.HARNESS_AUTOSCALE === "1";
+	// ── autoscaler (#3): a demand-driven control loop over the governor + warm pools. OBSERVE-ONLY is
+	//    ON BY DEFAULT (B3 graduation, 2026-06-22 — validated by bench/: targets track demand, no thrash):
+	//    it emits fleet telemetry + powers the dashboard's fleet panel but NEVER mutates pools, sheds, or
+	//    changes transport routing, so spawn behaviour is byte-for-byte unchanged. ACTUATION stays opt-in
+	//    (HARNESS_AUTOSCALE_ACT=1 → resize pools + load-shed). Opt out of observe-only with HARNESS_AUTOSCALE=0.
+	const AUTOSCALE = process.env.HARNESS_AUTOSCALE !== "0";
 	const AUTOSCALE_ACT = process.env.HARNESS_AUTOSCALE_ACT === "1";
 	// Live per-bundle demand for the controller: inflight = admitted & running; waiting = queued on the
 	// governor; arrival rate/trend = a real rolling-window signal (A6) so computeTarget's speculative slot
@@ -210,14 +212,21 @@ export default function harness(summon: ExtensionAPI) {
 					return 0;
 				},
 				prewarm: (b) => prewarm([b], { root, protected: protectedList }),
-				onTick: (ticks) =>
-					summon.events?.emit?.("agent-event", {
-						id: "fleet",
-						agent: "harness",
-						ts: Date.now(),
-						t: "autoscale",
-						ticks,
-					}),
+				// Surface only MEANINGFUL fleet activity. Observe-only (the default) ticks every few seconds;
+				// emitting idle/no-op ticks would repaint the TUI every tick and reintroduce the idle jitter the
+				// observe extension is engineered to avoid. Dropping all-hold/all-zero ticks keeps idle byte-silent
+				// (no emit ⇒ no repaint); only real scaling/demand reaches the dashboard.
+				onTick: (ticks) => {
+					const active = ticks.filter((t) => t.current > 0 || t.target > 0 || t.action !== "hold");
+					if (active.length)
+						summon.events?.emit?.("agent-event", {
+							id: "fleet",
+							agent: "harness",
+							ts: Date.now(),
+							t: "autoscale",
+							ticks: active,
+						});
+				},
 			})
 		: null;
 	fleet?.start();
