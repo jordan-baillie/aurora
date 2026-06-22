@@ -11,8 +11,13 @@ Extensions can register custom model providers via `summon.registerProvider()`. 
 
 See these complete provider examples:
 
-- [`examples/extensions/custom-provider-anthropic/`](../examples/extensions/custom-provider-anthropic/)
 - [`examples/extensions/custom-provider-gitlab-duo/`](../examples/extensions/custom-provider-gitlab-duo/)
+
+> A custom Anthropic provider with subscription **OAuth** is intentionally not shipped as an example
+> (logging a redistributed tool into a personal Claude subscription is outside Anthropic's terms). The
+> `registerProvider(name, { oauth })` API used here is the same mechanism you would use to add one as
+> your own local extension if you are individually entitled to — see
+> [providers.md](providers.md#claude-subscription-optional-self-hosted).
 
 ## Table of Contents
 

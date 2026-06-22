@@ -16,10 +16,15 @@ deterministic verification, a window-budget governor, safety guards, a live mult
 named team recipes, and an optional warm worker pool. It looks like Summon out of the box: a sub-zero
 gradient `SUMMON` wordmark, rounded box tool-cards, bordered messages, breathing gradient spinner.
 
-> **Cost model:** Summon drives sub-agents through your existing Claude subscription via OAuth. Every
-> spawn ejects `ANTHROPIC_API_KEY` and fails closed unless it is routing through your Claude
-> subscription, so a worker can never silently fall back to pay-per-token billing. Bring your own
-> authenticated login; Summon adds no separate API key.
+> **Cost model:** Summon is **bring-your-own-provider**. Sub-agents spawn `summon` subprocesses that
+> resolve the same credentials as your interactive session — typically an Anthropic API key
+> (`ANTHROPIC_API_KEY` or `/login`). Summon adds no separate key and ships no subscription login: you
+> authenticate with your own provider account, exactly like any other CLI.
+>
+> Self-hosting operators who are entitled to use subscription/OAuth routing can opt in by registering
+> it as a local extension and setting `SUMMON_FORCE_OAUTH_ROUTING=1` (which then ejects
+> `ANTHROPIC_API_KEY` from worker env and fails closed). This is off by default — see
+> [docs/providers.md](docs/providers.md).
 
 ---
 
@@ -36,16 +41,17 @@ npm run setup            # install + build + put `summon` on your PATH
 `npm run setup` is the one-command path on every OS. Prefer a script? Run `./install.sh`
 (macOS/Linux/Git-Bash) or `powershell -ExecutionPolicy Bypass -File install.ps1` (Windows).
 
-Then start it and connect your Claude subscription:
+Then start it and connect your provider:
 
 ```bash
 summon                   # start the TUI
 # then, inside Summon, run once:
-/login                   # authenticate via OAuth (uses your Claude subscription)
+/login                   # store an API key for your provider (e.g. Anthropic)
 ```
 
-That's it — `/login` is a slash-command **inside** the running app, not a shell command. Config lives in
-`~/.summon/`. Your normal tooling is untouched.
+You can also just export `ANTHROPIC_API_KEY` (or your provider's key) before launching. `/login` is a
+slash-command **inside** the running app, not a shell command. Config lives in `~/.summon/`. Your
+normal tooling is untouched.
 
 > **`summon` not found after setup?** Your npm global bin directory isn't on your PATH. Run
 > `npm prefix -g`, add that directory to your PATH, and reopen your terminal. (`npm run setup` prints a
@@ -90,12 +96,14 @@ Teams live alongside in `…/harness/teams/` or `<project>/.summon/teams/`.
 ## Safety (trustable headless)
 - **Deterministic verify** — `spawn_agent({ verify: "<cmd>" })`; the harness runs the acceptance
   command itself and a failure overrides the agent's own claim.
-- **$0-OAuth canary** — every spawn ejects `ANTHROPIC_API_KEY` and fails closed before exec unless it
-  is routing through your Claude subscription, so a worker can never silently bill pay-per-token.
+- **Fail-closed spawn auth** — every spawn requires a non-empty system prompt and verifies auth before
+  exec. Optional `SUMMON_FORCE_OAUTH_ROUTING=1` (self-hosting opt-in) additionally ejects
+  `ANTHROPIC_API_KEY` and fails closed so a forced-subscription deployment can never silently bill
+  pay-per-token. Off by default — the shipped product is bring-your-own-key.
 - **Cross-platform spawn** — sub-agents launch via the running Node runtime (PATH-independent), so the
   harness works identically on Windows and POSIX.
-- **Window-aware governor** — caps concurrent weight and tracks consumption against the Claude-Max
-  rolling 5h window; `HARNESS_WINDOW_TOKENS` opts into a hard window gate.
+- **Window-aware governor** — caps concurrent weight and tracks consumption against a configurable
+  rolling usage window; `HARNESS_WINDOW_TOKENS` opts into a hard window gate.
 - **Tool-layer guard** — every write/exec-capable worker blocks destructive bash and writes outside
   the project root / into protected paths (separator-agnostic, correct on Windows and POSIX).
 - **Within-run result cache + dedup** — identical read-only sub-tasks collapse to one execution.

@@ -54,7 +54,7 @@ export interface MarkdownSettings {
 }
 
 export interface WarningSettings {
-	anthropicExtraUsage?: boolean; // default: false in this fork (--system-prompt routes OAuth to Claude-Max at $0)
+	anthropicExtraUsage?: boolean; // default: true — warn when subscription (OAuth) auth is detected, since third-party harness usage may draw billed extra usage
 }
 
 export type TransportSetting = Transport;

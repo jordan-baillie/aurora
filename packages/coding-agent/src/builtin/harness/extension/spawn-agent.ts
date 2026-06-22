@@ -38,7 +38,7 @@ import { loadTeams, runTeam } from "../src/teams.ts";
 
 export default function harness(summon: ExtensionAPI) {
 	const { reg: registry, maxWeight, protectedList, root } = loadRegistries(process.cwd()); // fail-closed validation at load
-	// Window-aware governor: weighted concurrency cap + Claude-Max rolling-window token tracking.
+	// Window-aware governor: weighted concurrency cap + rolling-window token tracking.
 	// HARNESS_WINDOW_TOKENS>0 turns on a hard window gate; 0 (default) tracks + surfaces only (no hang).
 	const gov = new WindowGovernor({ maxWeight, budgetTokens: Number(process.env.HARNESS_WINDOW_TOKENS ?? 0) });
 	const names = [...registry.keys()].filter((n) => n !== "orchestrator").join(", ");

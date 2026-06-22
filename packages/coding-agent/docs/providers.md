@@ -1,6 +1,8 @@
 # Providers
 
-Summon supports subscription-based providers via OAuth and API key providers via environment variables or auth file. For each provider, summon knows all available models. The list is updated with every summon release.
+Summon is bring-your-own-provider. It supports API key providers (via environment variables or an auth file) and a few subscription providers via OAuth. For each provider, summon knows all available models. The list is updated with every summon release.
+
+> **Anthropic / Claude:** Summon authenticates to Anthropic with an **API key** (`ANTHROPIC_API_KEY`). It does **not** ship a built-in Claude Pro/Max subscription login — logging a redistributed tool into a personal Claude subscription is outside Anthropic's terms of service. If you are individually entitled to use subscription auth, you can register it yourself as a local extension; see [Claude subscription (optional, self-hosted)](#claude-subscription-optional-self-hosted).
 
 ## Table of Contents
 
@@ -16,7 +18,6 @@ Summon supports subscription-based providers via OAuth and API key providers via
 Use `/login` in interactive mode, then select a provider:
 
 - ChatGPT Plus/Pro (Codex)
-- Claude Pro/Max
 - GitHub Copilot
 
 Use `/logout` to clear credentials. Tokens are stored in `~/.summon/agent/auth.json` and auto-refresh when expired.
@@ -26,9 +27,27 @@ Use `/logout` to clear credentials. Tokens are stored in `~/.summon/agent/auth.j
 - Requires ChatGPT Plus or Pro subscription
 - Officially endorsed by OpenAI: [Codex for OSS](https://developers.openai.com/community/codex-for-oss)
 
-### Claude Pro/Max
+### Claude subscription (optional, self-hosted)
 
-Anthropic subscription auth is active for Claude Pro/Max accounts. Third-party harness usage draws from [extra usage](https://claude.ai/settings/usage) and is billed per token, not against Claude plan limits.
+Summon does not ship a Claude Pro/Max subscription login. To use Anthropic models, set an API key (`ANTHROPIC_API_KEY`) or store one via `/login` → *Use an API key* → Anthropic.
+
+If you are individually entitled to use subscription auth, you can register a Claude OAuth provider yourself as a **local extension** that is not part of the distributed product:
+
+```ts
+// ~/.summon/extensions/anthropic-oauth/index.ts (load with: summon -e <path>, or via settings)
+export default function (pi) {
+  pi.registerProvider("anthropic", {
+    oauth: {
+      name: "Anthropic (Claude Pro/Max)",
+      async login(callbacks) { /* your PKCE flow → OAuthCredentials */ },
+      async refreshToken(creds) { /* refresh → OAuthCredentials */ },
+      getApiKey(creds) { return creds.access; },
+    },
+  });
+}
+```
+
+When subscription (OAuth) auth is detected, Summon warns by default that third-party harness usage may draw from [extra usage](https://claude.ai/settings/usage). For the harness sub-agent spawns to route through the subscription at $0, set `SUMMON_FORCE_OAUTH_ROUTING=1` (which ejects `ANTHROPIC_API_KEY` from worker env and fails closed). This is entirely opt-in and your responsibility under Anthropic's terms.
 
 ### GitHub Copilot
 
