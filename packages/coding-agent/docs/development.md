@@ -14,7 +14,7 @@ npm run build
 Run from source:
 
 ```bash
-/path/to/summon/pi-test.sh
+/path/to/summon/summon-test.sh
 ```
 
 The script can be run from any directory. Summon keeps the caller's current working directory.
