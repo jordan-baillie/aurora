@@ -330,3 +330,102 @@ test("renderWidget command-bridge: jitter-safe \u2014 isAnimating unchanged + by
 	]);
 	assert.equal(isAnimating(idle), false, "command-bridge does not keep a settled run animating");
 });
+
+// ── TUI iteration: sparklines / row-collapse / pulse / hint bar / gradient (ideas 1–5) ──────────
+
+test("idea1: reduce buffers a governor trend, only on real load/window measurements", () => {
+	const vm = feed([
+		{ t: "spawned", id: "a", agent: "scout", model: "fast", load_pct: 20, window_pct: 10, ts: 1 },
+		{ t: "queued", id: "q", queue_depth: 2 }, // queue-only event MUST NOT add a trend sample
+		{ t: "scaling", id: "a", load_pct: 60, window_pct: 30 },
+	]);
+	assert.deepEqual(vm.govHist?.load, [20, 60], "one sample per measurement; queue-only ignored");
+	assert.deepEqual(vm.govHist?.win, [10, 30]);
+});
+
+test("idea1: trend sampling does NOT make isAnimating true (jitter invariant)", () => {
+	const vm = feed([
+		{ t: "scaling", id: "x", load_pct: 10, window_pct: 5 },
+		{ t: "scaling", id: "x", load_pct: 20, window_pct: 9 },
+	]);
+	assert.equal(vm.govHist?.load.length, 2);
+	assert.equal(isAnimating(vm), false, "trend sampling with no running agent must still quiesce");
+});
+
+test("idea1: command-bridge renders the LOAD/WIN sparkline once ≥2 measurements exist", () => {
+	const vm = feed([
+		{ t: "spawned", id: "a", agent: "scout", model: "fast", load_pct: 20, window_pct: 10, ts: 1 },
+		{ t: "scaling", id: "a", load_pct: 60, window_pct: 30 },
+	]);
+	const lines = renderWidget(vm, 72, 0, "command-bridge").map(stripAnsi);
+	// the gauge row is upper-case LOAD/WIN; the trend row is lower-case load/win.
+	assert.ok(
+		lines.some((l) => l.includes("load ") && !l.includes("LOAD")),
+		"a lower-case sparkline trend row is present",
+	);
+});
+
+test("idea2: duplicate settled agents collapse into a single ×N register row", () => {
+	const evs: any[] = [];
+	for (let i = 0; i < 6; i++) {
+		evs.push({ t: "spawned", id: `s${i}`, agent: "scout", model: "fast", ts: i });
+		evs.push({ t: "done", id: `s${i}`, status: "contract_violation", ts: i + 1 });
+	}
+	const vm = feed(evs);
+	const lines = renderWidget(vm, 72, 0, "command-bridge").map(stripAnsi);
+	const dupRows = lines.filter((l) => l.includes("contract_violation"));
+	assert.equal(dupRows.length, 1, "the wall-of-duplicates folds to one row");
+	assert.ok(dupRows[0].includes("contract_violation ×6"), "the fold carries a ×6 tally");
+});
+
+test("idea2: running agents are never collapsed (each keeps its live row)", () => {
+	const vm = feed([
+		{ t: "spawned", id: "a", agent: "scout", model: "fast", ts: 1 },
+		{ t: "spawned", id: "b", agent: "scout", model: "fast", ts: 1 },
+	]);
+	const rows = renderWidget(vm, 72, 0, "command-bridge")
+		.map(stripAnsi)
+		.filter((l) => /\bscout\b/.test(l) && l.includes("RUN"));
+	assert.equal(rows.length, 2, "two running scouts stay as two rows");
+});
+
+test("idea3: fleet pulse shows one status dot per agent", () => {
+	const vm = feed([
+		{ t: "spawned", id: "a", agent: "scout", model: "fast", ts: 1 },
+		{ t: "spawned", id: "b", agent: "scout", model: "fast", ts: 1 },
+		{ t: "done", id: "b", status: "done", ts: 2 },
+	]);
+	const pulse = renderWidget(vm, 72, 0, "command-bridge")
+		.map(stripAnsi)
+		.find((l) => l.includes("●"));
+	assert.ok(pulse, "a pulse row of status dots is present");
+	assert.equal((pulse!.match(/●/g) ?? []).length, 2, "one dot per agent");
+});
+
+test("idea4: footer hint bar surfaces the live harness commands (wide enough)", () => {
+	const vm = feed([{ t: "spawned", id: "a", agent: "scout", model: "fast", ts: 1 }]);
+	const joined = renderWidget(vm, 90, 0, "command-bridge").map(stripAnsi).join("\n");
+	assert.ok(joined.includes("/harness-drill"), "drill hint visible");
+	assert.ok(joined.includes("/harness-layout"), "layout hint visible");
+	assert.ok(joined.includes("/harness-scale"), "scale hint visible");
+});
+
+test("idea1-5: the rectangle stays exactly W with pulse + sparkline + collapsed rows", () => {
+	const evs: any[] = [
+		{ t: "spawned", id: "r", agent: "builder", model: "standard", load_pct: 30, window_pct: 12, ts: 1 },
+		{ t: "scaling", id: "r", load_pct: 70, window_pct: 40 },
+	];
+	for (let i = 0; i < 5; i++) {
+		evs.push({ t: "spawned", id: `f${i}`, agent: "scout", model: "fast", ts: i });
+		evs.push({ t: "done", id: `f${i}`, status: "failed", ts: i + 1 });
+	}
+	const vm = feed(evs);
+	for (const W of [46, 60, 72, 100]) {
+		const framed = renderWidget(vm, W, 0, "command-bridge")
+			.map(stripAnsi)
+			.filter((l) => /^[┌│├╞└]/.test(l));
+		const widths = new Set(framed.map((l) => [...l].length));
+		assert.equal(widths.size, 1, `W=${W}: all framed rows share one width; got ${[...widths].join(",")}`);
+		assert.equal([...widths][0], W, `W=${W}: rows fill the width`);
+	}
+});

@@ -176,6 +176,49 @@ function formatDuration(ms: number): string {
 	return `${(ms / 1000).toFixed(1)}s`;
 }
 
+// Unified-diff detection + per-line tinting for bash stdout. When the output is a git / unified diff
+// (e.g. `git diff`, `git show`, a patch), additions render green, deletions red, hunk headers accent,
+// and file/meta headers muted — the same palette the Edit-tool diff uses — instead of one flat
+// tool-output colour. Plain output is left as a single colour. Pure: one colour span per line and the
+// visible text is unchanged, so it has zero width / wrap / jitter impact.
+const DIFF_HUNK = /^@@ -\d/m;
+const DIFF_GIT = /^diff --git /m;
+
+function isDiffMetaLine(line: string): boolean {
+	return (
+		line.startsWith("diff --git ") ||
+		line.startsWith("index ") ||
+		line.startsWith("--- ") ||
+		line.startsWith("+++ ") ||
+		line.startsWith("new file") ||
+		line.startsWith("deleted file") ||
+		line.startsWith("old mode") ||
+		line.startsWith("new mode") ||
+		line.startsWith("rename ") ||
+		line.startsWith("copy ") ||
+		line.startsWith("similarity ") ||
+		line.startsWith("dissimilarity ")
+	);
+}
+
+export function styleBashOutput(output: string): string {
+	const lines = output.split("\n");
+	// Only treat the block as a diff when it carries a strong signature (a `diff --git` header or a
+	// unified hunk header). This keeps ordinary output that merely starts a line with + or - untouched.
+	if (!DIFF_GIT.test(output) && !DIFF_HUNK.test(output)) {
+		return lines.map((line) => theme.fg("toolOutput", line)).join("\n");
+	}
+	return lines
+		.map((line) => {
+			if (line.startsWith("@@ ")) return theme.fg("accent", line);
+			if (isDiffMetaLine(line)) return theme.fg("toolDiffContext", line);
+			if (line.startsWith("+")) return theme.fg("toolDiffAdded", line);
+			if (line.startsWith("-")) return theme.fg("toolDiffRemoved", line);
+			return theme.fg("toolOutput", line);
+		})
+		.join("\n");
+}
+
 function formatBashCall(args: { command?: string; timeout?: number } | undefined): string {
 	const command = str(args?.command);
 	const timeout = args?.timeout as number | undefined;
@@ -210,10 +253,7 @@ function rebuildBashResultRenderComponent(
 	}
 
 	if (output) {
-		const styledOutput = output
-			.split("\n")
-			.map((line) => theme.fg("toolOutput", line))
-			.join("\n");
+		const styledOutput = styleBashOutput(output);
 
 		if (options.expanded) {
 			component.addChild(new Text(`\n${styledOutput}`, 0, 0));

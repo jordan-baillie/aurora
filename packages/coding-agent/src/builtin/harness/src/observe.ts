@@ -27,6 +27,10 @@ export interface ViewModel {
 	// Governor signals (#1/#4): rolling-window %, weighted load %, and queue depth. Optional + additive
 	// so a missing field never blanks a gauge; populated defensively from events that carry them.
 	governor?: { windowPct: number; loadPct: number; queued: number };
+	// Rolling history of governor measurements for the LOAD/WIN sparklines (btop-style trend). EVENT-
+	// sampled (one sample per real load/window measurement) — never wall-clock sampled — so the widget
+	// stays a pure function of (vm, frame) and never repaints while idle (jitter invariant preserved).
+	govHist?: { load: number[]; win: number[] };
 	autoscale?: FleetTick[]; // latest per-bundle controller decisions (#3), when the autoscaler is armed
 	// Load-shedding (A1): when the window is hot the autoscaler degrades a spawn one tier. Surfaced so the
 	// silent quality trade-off is always VISIBLE (count + the most recent from→to downshift).
@@ -46,6 +50,16 @@ function captureGov(vm: ViewModel, e: any): void {
 	if (typeof e.load_pct === "number") g.loadPct = e.load_pct;
 	if (typeof e.queue_depth === "number") g.queued = e.queue_depth;
 	vm.governor = g;
+	// Sample the trend ONLY when a real load/window measurement arrived (not on a queue-only event),
+	// so the sparkline tracks governor decisions, not bookkeeping. Capped ring buffer.
+	if (typeof e.window_pct === "number" || typeof e.load_pct === "number") {
+		const h = vm.govHist ?? { load: [], win: [] };
+		h.load.push(g.loadPct);
+		h.win.push(g.windowPct);
+		if (h.load.length > 32) h.load.shift();
+		if (h.win.length > 32) h.win.shift();
+		vm.govHist = h;
+	}
 }
 
 export function reduce(vm: ViewModel, e: any): void {
@@ -192,12 +206,39 @@ const dur = (ms: number) => {
 	return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m${String(s % 60).padStart(2, "0")}s`;
 };
 const trunc = (s: string, n: number) => (s.length <= n ? s : `${s.slice(0, Math.max(0, n - 1))}…`);
-// A compact mini-bar for a 0..100 percentage: cool (slack) → lime → fuchsia (saturated). Pure.
+// Load ramp: green (slack) → amber → red (saturated). Each gauge/sparkline cell is tinted by what it
+// represents, so a meter reads like a btop bar — green at the low end shading to red as it fills. Pure.
+const RAMP: number[][] = [
+	[52, 211, 153], // green
+	[234, 179, 8], // amber
+	[251, 113, 133], // red
+];
+function rampHex(frac: number): string {
+	const t = Math.max(0, Math.min(1, frac)) * (RAMP.length - 1);
+	const k = Math.min(RAMP.length - 2, Math.floor(t));
+	const [r, g, b] = lerp(RAMP[k], RAMP[k + 1], t - k);
+	return `${r};${g};${b}`;
+}
+// A compact mini-bar for a 0..100 percentage. Each filled cell is coloured by its POSITION along the
+// bar (low cells green, high cells red) so the gauge gains a btop-style gradient. Visible width = w.
 function gauge(pct: number, w = 12): string {
 	const p = Math.max(0, Math.min(100, Math.round(pct)));
 	const filled = Math.round((p / 100) * w);
-	const col = p >= 85 ? PAL.fail : p >= 60 ? PAL.verify : PAL.run;
-	return fg(col, "█".repeat(filled)) + fg(PAL.border, "░".repeat(Math.max(0, w - filled)));
+	let out = "";
+	for (let i = 0; i < filled; i++) out += fg(rampHex((i + 1) / w), "█");
+	return out + fg(PAL.border, "░".repeat(Math.max(0, w - filled)));
+}
+// btop-style sparkline of a 0..100 series using an 8-level block ramp; each cell tinted by its own
+// value (a spike reads red). Visible width = min(values.length, maxW). Pure (function of the buffer).
+const SPARK = ["▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"];
+function spark(values: number[], maxW: number): string {
+	let out = "";
+	for (const v of values.slice(-maxW)) {
+		const p = Math.max(0, Math.min(100, v));
+		const idx = Math.min(SPARK.length - 1, Math.floor((p / 100) * SPARK.length));
+		out += fg(rampHex(p / 100), SPARK[idx]);
+	}
+	return out;
 }
 
 export function counts(vm: ViewModel) {
@@ -273,6 +314,45 @@ export const DASHBOARD_STYLES: DashboardStyle[] = ["panel", "command-bridge"];
 const ACC = "52;225;244"; // command-bridge cyan accent for [LABEL] cells
 type Counts = { total: number; run: number; ok: number; bad: number };
 
+// A displayed register row: a representative agent + how many identical ones it stands for.
+interface AgentRow {
+	rep: AgentView;
+	count: number;
+}
+// Collapse the wall-of-duplicates: settled agents that share (name, status) fold into one row with a
+// ×N tally (e.g. six failed scouts → "scout contract_violation ×6"), while running agents always stay
+// individual (each has its own live tool + spinner). The freshest settled agent represents its group.
+function groupAgents(agents: AgentView[]): AgentRow[] {
+	const rows: AgentRow[] = [];
+	const idx = new Map<string, number>();
+	for (const a of agents) {
+		if (a.status === "running") {
+			rows.push({ rep: a, count: 1 });
+			continue;
+		}
+		const key = `${a.agent} ${a.status}`;
+		const at = idx.get(key);
+		if (at === undefined) {
+			idx.set(key, rows.length);
+			rows.push({ rep: a, count: 1 });
+		} else {
+			rows[at].count++;
+			rows[at].rep = a;
+		}
+	}
+	return rows;
+}
+// A k9s-style "pulse": one status dot per agent so whole-fleet health reads at a glance even when the
+// register caps at 8 rows. Pure + static colours (no per-frame change) ⇒ no jitter. Returns the visible
+// width separately so the caller can pad the framed row exactly.
+function fleetPulse(agents: AgentView[], maxW: number): { vis: number; str: string } {
+	const overflow = agents.length > maxW;
+	const shown = overflow ? agents.slice(-(maxW - 1)) : agents;
+	const lead = overflow ? fg(PAL.muted, "…") : "";
+	const str = lead + shown.map((a) => fg(statusCol(a.status), "●")).join("");
+	return { vis: (overflow ? 1 : 0) + shown.length, str };
+}
+
 // drill-in detail (the selected agent's tool timeline) — shared by every layout.
 function drillIn(vm: ViewModel): string[] {
 	if (vm.expanded === undefined || !vm.agents.has(vm.expanded)) return [];
@@ -337,9 +417,10 @@ function renderPanel(vm: ViewModel, W: number, frame: number, c: Counts): string
 			" " +
 			fg(PAL.border, `${"─".repeat(Math.max(0, W - title.length - 5))}╮`),
 	);
-	for (const a of [...vm.agents.values()].slice(-8)) {
+	for (const { rep: a, count } of groupAgents([...vm.agents.values()]).slice(-8)) {
 		const bad2 = a.status !== "running" && a.status !== "done";
-		const act = a.status === "running" ? (a.tool ?? "working…") : a.status === "done" ? "done" : a.status;
+		let act = a.status === "running" ? (a.tool ?? "working…") : a.status === "done" ? "done" : a.status;
+		if (count > 1) act = `${act} ×${count}`;
 		const actCol = bad2 ? PAL.fail : a.status === "running" ? PAL.text : PAL.muted;
 		const gl = a.status === "running" ? SPIN[frame % SPIN.length] : glyph(a.status);
 		const left: [string, string][] = [
@@ -418,6 +499,11 @@ function renderCommandBridge(vm: ViewModel, W: number, frame: number, c: Counts)
 			"─",
 		),
 	);
+	// fleet pulse (k9s): one status dot per agent — whole-fleet health at a glance, even past the cap.
+	if (c.total > 0) {
+		const p = fleetPulse([...vm.agents.values()], inner);
+		L.push(body(p.vis, p.str));
+	}
 	// [GOV] segmented load/window bars
 	const g = vm.governor ?? { windowPct: 0, loadPct: 0, queued: 0 };
 	const lp = ` ${g.loadPct}%`;
@@ -428,6 +514,21 @@ function renderCommandBridge(vm: ViewModel, W: number, frame: number, c: Counts)
 			`${fg(ACC, "[GOV] ")}${fg(PAL.muted, "LOAD ")}${gauge(g.loadPct, 8)}${fg(PAL.text, lp)}${fg(PAL.muted, "  WIN ")}${gauge(g.windowPct, 8)}${fg(PAL.text, wp)}`,
 		),
 	);
+	// LOAD/WIN trend (btop sparkline) — only once there are ≥2 real measurements to plot. Width-fit so
+	// the row never breaks the rectangle on a narrow terminal.
+	if (vm.govHist && vm.govHist.load.length >= 2) {
+		const sw = Math.min(12, Math.floor((inner - 17) / 2));
+		if (sw >= 4) {
+			// spark() emits min(history, sw) cells — size the row to the ACTUAL count so the pad is exact.
+			const n = Math.min(vm.govHist.load.length, sw);
+			L.push(
+				body(
+					17 + 2 * n,
+					`${fg(PAL.muted, "      load ")}${spark(vm.govHist.load, sw)}${fg(PAL.muted, "  win ")}${spark(vm.govHist.win, sw)}`,
+				),
+			);
+		}
+	}
 	// queue depth + load-shedding (A1) — only when present
 	{
 		let content = "";
@@ -459,7 +560,7 @@ function renderCommandBridge(vm: ViewModel, W: number, frame: number, c: Counts)
 	if (c.total === 0) {
 		L.push(body(13, fg(PAL.muted, "(no contacts) ")));
 	} else {
-		for (const a of [...vm.agents.values()].slice(-8)) {
+		for (const { rep: a, count } of groupAgents([...vm.agents.values()]).slice(-8)) {
 			const running = a.status === "running";
 			const okk = a.status === "done";
 			const gl = running ? SPIN[frame % SPIN.length] : glyph(a.status);
@@ -469,8 +570,10 @@ function renderCommandBridge(vm: ViewModel, W: number, frame: number, c: Counts)
 			const leftFixed = 12 + model.length; // "gl "(2) + name+" "(9) + model+" "(model.length+1)
 			const room = Math.max(3, inner - leftFixed - (right.length + 1));
 			// done rows show nothing in the act column (the STATE cell already says DONE); failed rows keep
-			// the failure status (e.g. contract_violation); running rows show the live tool.
+			// the failure status (e.g. contract_violation); running rows show the live tool. A collapsed
+			// group appends a ×N tally so the count survives the fold.
 			let act = running ? (a.tool ?? "weaving") : okk ? "" : a.status;
+			if (count > 1) act = act ? `${act} ×${count}` : `×${count}`;
 			if (act.length > room) act = trunc(act, room);
 			const actCol = running ? PAL.text : okk ? PAL.muted : PAL.fail;
 			const lc = `${fg(statusCol(a.status), `${gl} `)}${fg(PAL.text, `${name} `)}${fg(modelCol(a.model), `${model} `)}${fg(actCol, act)}`;
@@ -498,11 +601,15 @@ function renderCommandBridge(vm: ViewModel, W: number, frame: number, c: Counts)
 		if (txt.length > inner) txt = trunc(txt, inner);
 		L.push(body(txt.length, fg(PAL.run, txt)));
 	}
+	// hotkey hint bar (k9s `?` / lazygit footer): surface the live commands. Falls back to the nominal
+	// strip when the terminal is too narrow to fit the full hint without breaking the rectangle.
+	const hintFull = "‹ /harness-drill · /harness-layout · /harness-scale ›";
+	const hint = hintFull.length <= W - 5 ? hintFull : "‹ board nominal ›";
 	L.push(
 		rule(
 			[
 				["└─ ", BR],
-				["‹ board nominal ›", PAL.muted],
+				[hint, PAL.muted],
 				[" ", BR],
 			],
 			"┘",
