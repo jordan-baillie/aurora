@@ -52,16 +52,17 @@ Runs at load (`validateBundle`). Rejects unsafe shapes structurally:
 
 ### A.3 Spawn + output-contract check
 `spawnAgent` builds the worker system prompt (role + skill + expertise + the contract as explicit
-required sections), spawns a `summon` subprocess with `ANTHROPIC_API_KEY` ejected (forces $0 OAuth
-routing through the user's Claude subscription), captures the result, and checks the output contract
+required sections), spawns a `summon` subprocess that resolves the operator's own provider credentials
+(bring-your-own key by default; `SUMMON_FORCE_OAUTH_ROUTING=1` is an optional self-hosting opt-in that
+ejects `ANTHROPIC_API_KEY` to force subscription routing), captures the result, and checks the output contract
 (`checkContract`): every `required_section` heading must be present and no `forbidden` string may
 appear. A contract miss marks the result failed.
 
 ### A.4 Window-aware governor
 `WindowGovernor` enforces a max concurrent **weight** (`max_weight`, default 8, per-project override in
 `.harness.json`; frontier spawns weigh more than fast). Fan-out beyond the budget queues; independent
-tasks run concurrently up to the cap. It also **tracks estimated token consumption inside the
-Claude-Max rolling 5h window** (`record`/`consumed`/`windowPct`, surfaced to observability). Setting
+tasks run concurrently up to the cap. It also **tracks estimated token consumption inside a configurable
+rolling usage window** (default 5h; `record`/`consumed`/`windowPct`, surfaced to observability). Setting
 `HARNESS_WINDOW_TOKENS > 0` turns on a hard window gate — `admit()` also queues once the rolling-window
 budget is exhausted, draining as old usage ages out; the default (`0`) tracks + surfaces only and never
 hangs a session. Token cost is an estimate (~4 chars/token over prompt + output bytes), labelled as
@@ -114,11 +115,13 @@ automatically.
   `py_compile` when available) and **blocks a syntactically broken write** with the parser error fed
   back to the agent, so it fails fast and locally instead of in a later verify/CI step. Validators are
   exact-only (zero false positives — never block valid content); unsupported types are skipped.
-- **$0-OAuth canary** (`assertOAuthRouting`) — every spawn path (oneshot + pooled rpc) builds its env
-  through the single-sourced `spawnEnv` (ejects `ANTHROPIC_API_KEY`) and **must** pass the canary
-  before exec: it throws if a key is present (would bill pay-per-token) or the `--system-prompt` is
-  empty (routes to extra usage). This makes “a worker spawn that silently bills” *unrepresentable*,
-  not merely conventional.
+- **Fail-closed spawn auth** (`assertSpawnAuth`) — every spawn path (oneshot + pooled rpc) builds its
+  env through the single-sourced `spawnEnv` and **must** pass the auth check before exec: it always
+  throws if the `--system-prompt` is empty (which would route Anthropic calls to pay-per-token extra
+  usage). With the optional `SUMMON_FORCE_OAUTH_ROUTING=1` opt-in, `spawnEnv` also ejects
+  `ANTHROPIC_API_KEY` and the check additionally fails closed if a key survived into worker env —
+  making “a forced-subscription worker that silently bills a key” *unrepresentable*. The default is
+  bring-your-own-key: a worker uses whatever provider credential the operator configured.
 
 ### A.8 Observability, teams, scale
 - **Fleet-level observability (#8)** — two things the per-session widget can't give: (1) a **cross-run
@@ -252,5 +255,6 @@ node --experimental-strip-types --test packages/coding-agent/src/builtin/harness
 ### Provenance & licence
 Summon is a derivative work of [`badlogic/pi-mono`](https://github.com/badlogic/pi-mono) (the Pi
 coding agent, MIT © Mario Zechner) — full engine source and history retained under MIT. The Pi credit
-lives in `NOTICE` + `LICENSE`; everything else is branded Summon. Summon adds no API key: it drives
-your own authenticated login over OAuth (the `/login` slash-command inside the running app).
+lives in `NOTICE` + `LICENSE`; everything else is branded Summon. Summon adds no credentials of its
+own: it is bring-your-own-provider, authenticating with your own API key (`ANTHROPIC_API_KEY` or the
+`/login` slash-command inside the running app).

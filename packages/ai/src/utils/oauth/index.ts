@@ -3,12 +3,18 @@
  *
  * This module handles login, token refresh, and credential storage
  * for OAuth-based providers:
- * - Anthropic (Claude Pro/Max)
  * - GitHub Copilot
+ * - OpenAI Codex (ChatGPT)
+ *
+ * NOTE: Anthropic (Claude Pro/Max) subscription OAuth is intentionally NOT a
+ * built-in provider here. Logging a redistributed tool into a personal Claude
+ * subscription is outside Anthropic's terms, so summon ships BYO-API-key auth
+ * by default. Operators who are entitled to use subscription auth can register
+ * it themselves as a local extension via
+ * `pi.registerProvider("anthropic", { oauth: { ... } })` — see
+ * docs/providers.md. Do not re-add an Anthropic entry to the built-in registry.
  */
 
-// Anthropic
-export { anthropicOAuthProvider, loginAnthropic, refreshAnthropicToken } from "./anthropic.ts";
 export * from "./device-code.ts";
 // GitHub Copilot
 export {
@@ -27,16 +33,13 @@ export * from "./types.ts";
 // Provider Registry
 // ============================================================================
 
-import { anthropicOAuthProvider } from "./anthropic.ts";
 import { githubCopilotOAuthProvider } from "./github-copilot.ts";
 import { openaiCodexOAuthProvider } from "./openai-codex.ts";
 import type { OAuthCredentials, OAuthProviderId, OAuthProviderInfo, OAuthProviderInterface } from "./types.ts";
 
-const BUILT_IN_OAUTH_PROVIDERS: OAuthProviderInterface[] = [
-	anthropicOAuthProvider,
-	githubCopilotOAuthProvider,
-	openaiCodexOAuthProvider,
-];
+// Built-in OAuth providers shipped with summon. Anthropic subscription OAuth is
+// deliberately excluded (see module header) — register it as a local extension.
+const BUILT_IN_OAUTH_PROVIDERS: OAuthProviderInterface[] = [githubCopilotOAuthProvider, openaiCodexOAuthProvider];
 
 const oauthProviderRegistry = new Map<string, OAuthProviderInterface>(
 	BUILT_IN_OAUTH_PROVIDERS.map((provider) => [provider.id, provider]),

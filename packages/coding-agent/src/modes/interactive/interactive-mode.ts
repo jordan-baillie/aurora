@@ -4093,11 +4093,11 @@ export class InteractiveMode {
 	private async maybeWarnAboutAnthropicSubscriptionAuth(
 		model: Model<any> | undefined = this.session.model,
 	): Promise<void> {
-		// Default-off in this fork: --system-prompt routing pins OAuth calls to the
-		// Claude-Max subscription at $0 marginal cost (see /root/AGENTS.md). The
-		// upstream warning's premise ('OAuth draws from extra usage') does not hold
-		// here, so it is opt-in rather than opt-out.
-		if (this.settingsManager.getWarnings().anthropicExtraUsage !== true) {
+		// Warn by default when subscription (OAuth) auth is in use: third-party harness
+		// usage can draw billed extra usage rather than plan limits. Operators who are
+		// entitled to subscription routing can silence this via the "Anthropic extra
+		// usage" warning setting (set it to false).
+		if (this.settingsManager.getWarnings().anthropicExtraUsage === false) {
 			return;
 		}
 		if (this.anthropicSubscriptionWarningShown) {

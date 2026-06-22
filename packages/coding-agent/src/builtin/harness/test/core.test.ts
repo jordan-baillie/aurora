@@ -9,11 +9,12 @@ import { test } from "node:test";
 import {
 	type AgentBundle,
 	appendExpertiseNote,
-	assertOAuthRouting,
+	assertSpawnAuth,
 	buildSystemPrompt,
 	checkContract,
 	estimateTokens,
 	finalizeResult,
+	forceOAuthRouting,
 	loadExpertise,
 	loadExpertiseMemory,
 	loadRegistry,
@@ -443,27 +444,74 @@ test("registryView: sorted ascending, typed rows, contains seed agents", () => {
 		assert.ok(names.includes(expected), `missing seed agent: ${expected}`);
 });
 
-// ── $0-OAuth canary ────────────────────────────────────────────────────────────
+// ── spawn auth policy (BYO-key default + opt-in OAuth canary) ───────────────────
 
-test("spawnEnv ejects ANTHROPIC_API_KEY and sets harness env", () => {
+function withForceOAuth<T>(value: string | undefined, fn: () => T): T {
+	const saved = process.env.SUMMON_FORCE_OAUTH_ROUTING;
+	try {
+		if (value === undefined) delete process.env.SUMMON_FORCE_OAUTH_ROUTING;
+		else process.env.SUMMON_FORCE_OAUTH_ROUTING = value;
+		return fn();
+	} finally {
+		if (saved === undefined) delete process.env.SUMMON_FORCE_OAUTH_ROUTING;
+		else process.env.SUMMON_FORCE_OAUTH_ROUTING = saved;
+	}
+}
+
+function withApiKey<T>(value: string | undefined, fn: () => T): T {
 	const saved = process.env.ANTHROPIC_API_KEY;
 	try {
-		process.env.ANTHROPIC_API_KEY = "sk-should-be-ejected";
-		const env = spawnEnv("/work/repo", [".env", "secrets"]);
-		assert.equal(env.ANTHROPIC_API_KEY, undefined, "key must be ejected to force $0 OAuth");
-		assert.equal(env.HARNESS_ROOT, "/work/repo");
-		assert.deepEqual(JSON.parse(env.HARNESS_PROTECTED ?? "null"), [".env", "secrets"]);
+		if (value === undefined) delete process.env.ANTHROPIC_API_KEY;
+		else process.env.ANTHROPIC_API_KEY = value;
+		return fn();
 	} finally {
 		if (saved === undefined) delete process.env.ANTHROPIC_API_KEY;
 		else process.env.ANTHROPIC_API_KEY = saved;
 	}
+}
+
+test("forceOAuthRouting parses truthy opt-in values and defaults off", () => {
+	assert.equal(forceOAuthRouting({}), false);
+	for (const v of ["1", "true", "YES", " on "])
+		assert.equal(forceOAuthRouting({ SUMMON_FORCE_OAUTH_ROUTING: v }), true);
+	for (const v of ["0", "false", "", "no"]) assert.equal(forceOAuthRouting({ SUMMON_FORCE_OAUTH_ROUTING: v }), false);
 });
 
-test("assertOAuthRouting throws when a key would bill or the system prompt is empty", () => {
-	assert.throws(() => assertOAuthRouting({ ANTHROPIC_API_KEY: "sk-x" }, SYS_HEADER), /ANTHROPIC_API_KEY present/);
-	assert.throws(() => assertOAuthRouting({}, ""), /empty --system-prompt/);
-	assert.throws(() => assertOAuthRouting({}, "   "), /empty --system-prompt/);
-	assert.doesNotThrow(() => assertOAuthRouting({}, SYS_HEADER));
+test("spawnEnv preserves ANTHROPIC_API_KEY by default (BYO key) and sets harness env", () => {
+	withApiKey("sk-byo-key", () =>
+		withForceOAuth(undefined, () => {
+			const env = spawnEnv("/work/repo", [".env", "secrets"]);
+			assert.equal(env.ANTHROPIC_API_KEY, "sk-byo-key", "default policy must not strip the user's API key");
+			assert.equal(env.HARNESS_ROOT, "/work/repo");
+			assert.deepEqual(JSON.parse(env.HARNESS_PROTECTED ?? "null"), [".env", "secrets"]);
+		}),
+	);
+});
+
+test("spawnEnv ejects ANTHROPIC_API_KEY only when SUMMON_FORCE_OAUTH_ROUTING is set", () => {
+	withApiKey("sk-should-be-ejected", () =>
+		withForceOAuth("1", () => {
+			const env = spawnEnv("/work/repo");
+			assert.equal(env.ANTHROPIC_API_KEY, undefined, "forced OAuth must eject the key to force $0 routing");
+		}),
+	);
+});
+
+test("assertSpawnAuth requires a non-empty system prompt regardless of policy", () => {
+	assert.throws(() => assertSpawnAuth({}, ""), /empty --system-prompt/);
+	assert.throws(() => assertSpawnAuth({}, "   "), /empty --system-prompt/);
+	assert.doesNotThrow(() => assertSpawnAuth({}, SYS_HEADER));
+});
+
+test("assertSpawnAuth allows an API key by default but fails closed when OAuth is forced", () => {
+	// Default policy (BYO key): a present key is fine.
+	assert.doesNotThrow(() => assertSpawnAuth({ ANTHROPIC_API_KEY: "sk-x" }, SYS_HEADER));
+	// Forced OAuth: a surviving key must fail closed.
+	assert.throws(
+		() => assertSpawnAuth({ ANTHROPIC_API_KEY: "sk-x", SUMMON_FORCE_OAUTH_ROUTING: "1" }, SYS_HEADER),
+		/ANTHROPIC_API_KEY is present/,
+	);
+	assert.doesNotThrow(() => assertSpawnAuth({ SUMMON_FORCE_OAUTH_ROUTING: "1" }, SYS_HEADER));
 });
 
 // ── window-aware governor ──────────────────────────────────────────────────────

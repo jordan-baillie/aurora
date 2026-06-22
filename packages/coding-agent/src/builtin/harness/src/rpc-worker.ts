@@ -3,7 +3,7 @@
 // JSONL framing: split on \n only, strip trailing \r — never use node readline.
 import { spawn } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
-import { type AgentBundle, assertOAuthRouting, buildSystemPrompt, GUARD_EXT, MODEL, spawnEnv } from "./core.ts";
+import { type AgentBundle, assertSpawnAuth, buildSystemPrompt, GUARD_EXT, MODEL, spawnEnv } from "./core.ts";
 import { agentSpawnCommand } from "./paths.ts";
 import type { PooledWorker } from "./pool.ts";
 
@@ -50,7 +50,7 @@ export class RpcWorker implements PooledWorker {
 		if (hasWrite) args.push("-e", GUARD_EXT);
 
 		const env = spawnEnv(opts.root, opts.protected);
-		assertOAuthRouting(env, sys); // $0-OAuth canary: fail-closed before we spawn the rpc worker
+		assertSpawnAuth(env, sys); // fail-closed auth check before we spawn the rpc worker
 
 		const { cmd, prefix } = agentSpawnCommand();
 		const proc = spawn(cmd, [...prefix, ...args], {

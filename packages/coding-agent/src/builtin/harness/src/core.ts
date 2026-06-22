@@ -32,7 +32,9 @@ export const MODEL: Record<AgentBundle["model_tier"], string> = {
 	standard: "claude-sonnet-4-6",
 	frontier: "claude-opus-4-8",
 };
-export const SYS_HEADER = "You are Claude Code, Anthropic's official CLI for Claude."; // $0-OAuth routing
+// Default system-prompt header for spawned workers. A non-empty system prompt is required (see
+// assertSpawnAuth) so Anthropic calls never fall through to pay-per-token "extra usage" routing.
+export const SYS_HEADER = "You are Claude Code, Anthropic's official CLI for Claude.";
 const WRITE_TOOLS = new Set(["edit", "write", "bash"]);
 export const DELEGATION_TOOLS = new Set(["spawn_agent", "spawn_agents", "run_team", "run_blueprint"]);
 // Generic, project-AGNOSTIC defaults. Per-project additions come from `.harness.json` { protected: [...] }.
@@ -259,39 +261,54 @@ function runVerifyShell(cmd: string, cwd: string): { status: number | null; stdo
 	return { status: last?.status ?? 1, stdout: last?.stdout ?? "", stderr: last?.stderr ?? "bash not found" };
 }
 
-// ── $0-OAuth canary ───────────────────────────────────────────────────────────
-// Make "a worker spawn that silently bills pay-per-token" UNREPRESENTABLE. Every spawn path
-// (oneshot `summon -p` + pooled `summon --mode rpc`) constructs its env via spawnEnv() and MUST pass
-// through this canary before exec — so the $0 routing rule is tool-layer-enforced, not convention.
-// (Routing rule: ANY non-empty --system-prompt routes to the Claude-Max subscription; a present
-// ANTHROPIC_API_KEY makes the CLI silently prefer the key and bill it.)
+// ── spawn auth policy ───────────────────────────────────────────────────────────
+// By default summon uses BYO-provider auth: a spawned worker resolves its own credentials (API key
+// from auth.json / env, or whatever provider the operator configured) exactly like an interactive
+// session. Every spawn path (oneshot `summon -p` + pooled `summon --mode rpc`) constructs its env via
+// spawnEnv() and MUST pass through assertSpawnAuth() before exec, so the policy is tool-layer-enforced.
+//
+// Optional opt-in (self-hosted operators only): set SUMMON_FORCE_OAUTH_ROUTING=1 to require
+// subscription/OAuth routing — when enabled, spawnEnv() ejects ANTHROPIC_API_KEY so a worker can
+// never silently fall back to a billed key, and assertSpawnAuth() fails closed if one is still
+// present. This is OFF by default; the shipped product does not assume a Claude subscription.
+export function forceOAuthRouting(env: NodeJS.ProcessEnv = process.env): boolean {
+	const v = (env.SUMMON_FORCE_OAUTH_ROUTING ?? "").trim().toLowerCase();
+	return v === "1" || v === "true" || v === "yes" || v === "on";
+}
 export function spawnEnv(root?: string, protectedList?: string[]): NodeJS.ProcessEnv {
 	const env = { ...process.env };
-	delete (env as { ANTHROPIC_API_KEY?: string }).ANTHROPIC_API_KEY; // force $0 OAuth — never bill a key
+	if (forceOAuthRouting(env)) {
+		delete (env as { ANTHROPIC_API_KEY?: string }).ANTHROPIC_API_KEY; // opt-in: force $0 OAuth — never bill a key
+	}
 	env.HARNESS_ROOT = root ?? process.cwd();
 	// JSON-encoded (not ":"-joined) so protected entries containing a colon — e.g. an absolute Windows
 	// path like "C:\\repo\\secrets" — survive the round-trip to the worker-side guard intact.
 	env.HARNESS_PROTECTED = JSON.stringify(protectedList ?? DEFAULT_PROTECTED);
 	return env;
 }
-export function assertOAuthRouting(env: NodeJS.ProcessEnv, sysPrompt: string): void {
-	if (env.ANTHROPIC_API_KEY)
-		throw new Error(
-			"$0-OAuth canary: ANTHROPIC_API_KEY present in worker env — would route to pay-per-token billing; eject it before spawn",
-		);
+export function assertSpawnAuth(env: NodeJS.ProcessEnv, sysPrompt: string): void {
+	// A non-empty system prompt is always required: an empty --system-prompt routes Anthropic calls to
+	// pay-per-token "extra usage", which is never what a worker wants.
 	if (!sysPrompt || !sysPrompt.trim())
 		throw new Error(
-			"$0-OAuth canary: empty --system-prompt — routes to pay-per-token extra usage; a non-empty system prompt is required for Claude-Max routing",
+			"spawn auth: empty --system-prompt — a non-empty system prompt is required before spawning a worker",
+		);
+	// Opt-in OAuth canary (SUMMON_FORCE_OAUTH_ROUTING): fail closed if a billable key survived into the
+	// worker env, so forced-subscription deployments can never silently bill pay-per-token.
+	if (forceOAuthRouting(env) && env.ANTHROPIC_API_KEY)
+		throw new Error(
+			"$0-OAuth canary: SUMMON_FORCE_OAUTH_ROUTING is set but ANTHROPIC_API_KEY is present in worker env — eject it before spawn",
 		);
 }
 
-// ── window governor (weighted concurrency + Claude-Max rolling-window tracking) ─────────────
-// $0 marginal cost, but the rolling 5h Claude-Max window is the real limit. The governor caps
+// ── window governor (weighted concurrency + rolling-window usage tracking) ──────────────────
+// Provider rate/usage limits are typically enforced over a rolling time window, so the governor caps
 // simultaneous WEIGHT (frontier costs more than fast) AND tracks estimated token consumption inside
-// the rolling window. windowPct() surfaces that to observability; when a hard budget is configured
-// (budgetTokens > 0) admit() also queues once the window is exhausted, draining as old usage ages out.
+// a configurable rolling window. windowPct() surfaces that to observability; when a hard budget is
+// configured (budgetTokens > 0) admit() also queues once the window is exhausted, draining as old
+// usage ages out. windowMs/budgetTokens default to generic values and are fully configurable.
 const WEIGHT = { fast: 1, standard: 2, frontier: 4 } as const;
-export const DEFAULT_WINDOW_MS = 5 * 60 * 60 * 1000; // Claude-Max rolling 5h
+export const DEFAULT_WINDOW_MS = 5 * 60 * 60 * 1000; // default rolling window (5h); override via opts.windowMs
 // Rough output/input token estimate from character count (~4 chars/token). Labelled an estimate
 // because we do not get exact provider usage off the subprocess; a proxy beats count-only gating.
 export function estimateTokens(chars: number): number {
@@ -328,7 +345,7 @@ export class WindowGovernor {
 	record(tokens: number, now = Date.now()): void {
 		if (tokens > 0) this.events.push({ ts: now, tokens });
 	}
-	// % of the Claude-Max window consumed (0 when no budget configured — tracking only).
+	// % of the rolling usage window consumed (0 when no budget configured — tracking only).
 	windowPct(now = Date.now()): number {
 		if (!this.budgetTokens) return 0;
 		return Math.min(100, Math.round((this.consumed(now) / this.budgetTokens) * 100));
@@ -591,7 +608,7 @@ export function spawnOnce(
 	// out-of-root / protected-path writes at the tool layer — enforcement, not prompt convention).
 	if (bundle.tools.some((t) => t === "bash" || t === "write" || t === "edit")) args.push("-e", GUARD_EXT);
 	const env = spawnEnv(opts.root, opts.protected);
-	assertOAuthRouting(env, sys); // $0-OAuth canary: fail-closed before we spawn anything
+	assertSpawnAuth(env, sys); // fail-closed auth check before we spawn anything
 	const t0 = Date.now();
 	return new Promise((resolve) => {
 		const { cmd, prefix } = agentSpawnCommand();

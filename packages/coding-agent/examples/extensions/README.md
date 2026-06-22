@@ -122,7 +122,6 @@ cp permission-gate.ts ~/.summon/agent/extensions/
 
 | Extension | Description |
 |-----------|-------------|
-| `custom-provider-anthropic/` | Custom Anthropic provider with OAuth support and custom streaming implementation |
 | `custom-provider-gitlab-duo/` | GitLab Duo provider using `@summon/ai`'s built-in Anthropic/OpenAI streaming via proxy |
 
 ### External Dependencies
