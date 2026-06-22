@@ -28,6 +28,12 @@ export interface BlueprintNode {
 	// human-in-the-loop: a node so flagged will not launch until its approval gate is granted; the run
 	// PAUSES (durably) at that boundary and resumes once the gate is decided (see runBlueprint opts).
 	requires_approval?: boolean;
+	// DYNAMIC fan-out (gap 4: adaptive orchestration). An agent node with `fan_out_from: <depId>` is
+	// EXPANDED at run time: the upstream node's output is split into items (one per non-empty line),
+	// and `agent` is spawned once per item with `prompt` templated with {{item}} and {{index}}. The
+	// node's output is the joined child outputs; it is `done` iff every child succeeded.
+	fan_out_from?: string;
+	fan_out_limit?: number; // cap on items (default 20) — bounds blast radius / token spend
 }
 export interface Blueprint {
 	name: string;
@@ -39,6 +45,23 @@ export interface Blueprint {
 export type NodeKind = "agent" | "code";
 export function nodeKind(n: BlueprintNode): NodeKind {
 	return n.run !== undefined ? "code" : "agent";
+}
+export function isFanOut(n: BlueprintNode): boolean {
+	return typeof n.fan_out_from === "string" && n.fan_out_from.length > 0;
+}
+export const FANOUT_DEFAULT_LIMIT = 20;
+// Split an upstream node's output into fan-out items: non-empty trimmed lines, de-duplicated, capped.
+export function fanOutItems(upstream: string, limit = FANOUT_DEFAULT_LIMIT): string[] {
+	const seen = new Set<string>();
+	const items: string[] = [];
+	for (const ln of (upstream ?? "").split("\n")) {
+		const t = ln.trim();
+		if (!t || seen.has(t)) continue;
+		seen.add(t);
+		items.push(t);
+		if (items.length >= Math.max(1, limit)) break;
+	}
+	return items;
 }
 
 // What an injected executor returns for one node. `output` is exposed downstream as {{node.<id>}}.
@@ -110,6 +133,12 @@ export function validateBlueprint(bp: Blueprint, registry: Map<string, AgentBund
 				err(
 					`node '${n.id}': agent '${n.agent}' is a delegation agent (may_spawn) — blueprints orchestrate workers, not other orchestrators`,
 				);
+			if (n.fan_out_from !== undefined) {
+				if (typeof n.fan_out_from !== "string" || !n.fan_out_from)
+					err(`node '${n.id}': fan_out_from must be a non-empty node id`);
+				if (!(n.depends_on ?? []).includes(n.fan_out_from))
+					err(`node '${n.id}': fan_out_from '${n.fan_out_from}' must also be in depends_on`);
+			}
 		}
 	}
 	// edges exist + no self-dependency
@@ -162,6 +191,32 @@ export function loadBlueprints(registry: Map<string, AgentBundle>, cwd = process
 		}
 	}
 	return out;
+}
+
+// ── dynamic fan-out: expand one node into N parallel children from upstream output ──
+// Each child runs `agent` with `prompt` templated with {{item}}/{{index}} (+ inherited vars). The
+// node succeeds iff every child does; output is the joined child outputs (so a downstream
+// {{node.<id>}} sees them all). Children get synthetic ids `<node>#<i>` so task ids never collide.
+async function runFanOut(
+	n: BlueprintNode,
+	vars: Record<string, string>,
+	upstream: string,
+	exec: BlueprintExec,
+): Promise<NodeRun> {
+	const items = fanOutItems(upstream, n.fan_out_limit ?? FANOUT_DEFAULT_LIMIT);
+	if (!items.length) return { ok: true, output: "(fan-out: 0 items from upstream)", result: { children: 0 } };
+	const runs = await Promise.all(
+		items.map((item, i) => {
+			const prompt = fillTemplate(n.prompt!, { ...vars, item, index: String(i) });
+			const child: BlueprintNode = { id: `${n.id}#${i}`, agent: n.agent, prompt, verify: n.verify };
+			return exec
+				.runAgent(n.agent!, prompt, child)
+				.catch((e) => ({ ok: false, output: e instanceof Error ? e.message : String(e) }) as NodeRun);
+		}),
+	);
+	const ok = runs.every((r) => r.ok);
+	const output = runs.map((r, i) => `### item ${i}: ${items[i]}\n${r.output}`).join("\n\n");
+	return { ok, output, result: { children: runs.length, failed: runs.filter((r) => !r.ok).length } };
 }
 
 // ── runner — continuous DAG scheduler (max parallelism) ───────────────────────
@@ -233,12 +288,21 @@ export async function runBlueprint(
 		const v: Record<string, string> = { ...vars };
 		for (const d of n.depends_on ?? []) v[`node.${d}`] = output.get(d) ?? "";
 		const kind = nodeKind(n);
-		const filled = fillTemplate(kind === "code" ? n.run! : n.prompt!, v);
-		journal({ type: "node_started", node: n.id, kind, agent: n.agent });
+		const fan = isFanOut(n);
+		// A fan-out node templates per item at run time; record the un-itemised prompt for visibility.
+		const filled = fillTemplate(
+			kind === "code" ? n.run! : n.prompt!,
+			fan ? { ...v, item: "<per-item>", index: "<i>" } : v,
+		);
+		journal({ type: "node_started", node: n.id, kind, agent: n.agent, fan_out: fan || undefined });
 		const p = (async () => {
 			let run: NodeRun;
 			try {
-				run = kind === "code" ? await exec.runCode(filled, n) : await exec.runAgent(n.agent!, filled, n);
+				if (fan) {
+					run = await runFanOut(n, v, output.get(n.fan_out_from!) ?? "", exec);
+				} else {
+					run = kind === "code" ? await exec.runCode(filled, n) : await exec.runAgent(n.agent!, filled, n);
+				}
 			} catch (e) {
 				run = { ok: false, output: e instanceof Error ? e.message : String(e) };
 			}

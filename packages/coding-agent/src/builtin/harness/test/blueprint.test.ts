@@ -9,6 +9,7 @@ import { test } from "node:test";
 import {
 	type Blueprint,
 	type BlueprintExec,
+	fanOutItems,
 	loadBlueprints,
 	type NodeRun,
 	runBlueprint,
@@ -254,6 +255,8 @@ test("shipped scout-build-verify blueprint validates", () => {
 		delete process.env.HARNESS_BLUEPRINTS_DIR; // use the install default (BLUEPRINTS_DIR)
 		const bps = loadBlueprints(reg);
 		assert.ok(bps.has("scout-build-verify"), "the shipped blueprint should load");
+		assert.ok(bps.has("gated-build"), "the shipped requires_approval example should validate");
+		assert.ok(bps.has("fanout-review"), "the shipped fan_out_from example should validate");
 	} finally {
 		if (saved !== undefined) process.env.HARNESS_BLUEPRINTS_DIR = saved;
 	}
@@ -330,4 +333,61 @@ test("omitting opts is byte-for-byte the old behaviour (no journal, no pause)", 
 	const out = await runBlueprint(bp, {}, recExec([]));
 	assert.equal(out.nodes[0].status, "done");
 	assert.ok(!out.paused, "a gate-free run is never paused");
+});
+
+// ── dynamic fan-out (gap 4): expand a node into N children from upstream output ──
+
+test("fanOutItems splits non-empty, de-duped, capped lines", () => {
+	assert.deepEqual(fanOutItems("a\n\nb\n a \nc\n", 10), ["a", "b", "c"]);
+	assert.deepEqual(fanOutItems("x\ny\nz\nw", 2), ["x", "y"]);
+	assert.deepEqual(fanOutItems(""), []);
+});
+
+test("fan_out_from expands one child per upstream line; node done iff all children ok", async () => {
+	const bp: Blueprint = {
+		name: "fo",
+		nodes: [
+			{ id: "list", run: "printf 'alpha\\nbeta\\ngamma\\n'" },
+			{
+				id: "work",
+				agent: "builder",
+				prompt: "do {{item}} (#{{index}})",
+				depends_on: ["list"],
+				fan_out_from: "list",
+			},
+		],
+	};
+	const seen: string[] = [];
+	const exec: BlueprintExec = {
+		runCode: async () => ({ ok: true, output: "alpha\nbeta\ngamma" }),
+		runAgent: async (_a, prompt, node) => {
+			seen.push(`${node.id}|${prompt}`);
+			return { ok: true, output: `done:${prompt}` };
+		},
+	};
+	const out = await runBlueprint(bp, {}, exec);
+	const work = out.nodes.find((n) => n.id === "work")!;
+	assert.equal(work.status, "done");
+	// three synthetic children with per-item templated prompts
+	assert.deepEqual(seen, ["work#0|do alpha (#0)", "work#1|do beta (#1)", "work#2|do gamma (#2)"]);
+	assert.match(work.output, /item 0: alpha/);
+	assert.match(work.output, /item 2: gamma/);
+});
+
+test("fan_out node fails if any child fails; validation requires fan_out_from in depends_on", () => {
+	const reg2 = new Map<string, AgentBundle>([["builder", makeBundle("builder")]]);
+	assert.throws(
+		() =>
+			validateBlueprint(
+				{
+					name: "bad",
+					nodes: [
+						{ id: "a", run: "ls" },
+						{ id: "b", agent: "builder", prompt: "{{item}}", fan_out_from: "a" },
+					],
+				},
+				reg2,
+			),
+		/must also be in depends_on/,
+	);
 });

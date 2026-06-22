@@ -43,7 +43,13 @@ CI-clean: `biome check` ✓, `tsgo --noEmit` ✓.
 
 ---
 
-## Phase 2 — wire the spine into the live extension (`extension/spawn-agent.ts`)
+## Phase 2 — wire the spine into the live extension (`extension/spawn-agent.ts`) — IMPLEMENTED ✅
+
+Shipped: `RUNS_DIR` in `paths.ts`; new pure `src/runstore.ts` (run identity + crash/pause discovery,
+unit-tested); `run_blueprint` now opens a `RunSession`, journals the run, and reports a paused state;
+`resume_run({ run_id })` and `approve_gate({ run_id, gate, approved })` tools; boot-time
+`resumable-runs` scan; `HARNESS_DURABLE=0` escape hatch. Original spec below.
+
 
 Goal: every `run_blueprint` (then `spawn_agents`/`run_team`) writes a durable session and is resumable
 from the CLI, with an approval surface. Touch-points:
@@ -65,7 +71,17 @@ from the CLI, with an approval surface. Touch-points:
 **Risk control:** Phase 2 is additive — the in-memory path stays the default until the session write is
 proven; a `HARNESS_DURABLE=0` escape hatch disables journaling. No change to `spawnOnce`/`finalizeResult`.
 
-## Phase 3 — extend coverage + close gap 4
+## Phase 3 — extend coverage + close gap 4 — IMPLEMENTED ✅
+
+Shipped: `run_team` + `spawn_agents` journal durably (team resume via a tested `runTeam` skipDone hook);
+dynamic **`fan_out_from`** blueprint node (expand N children from upstream output, unit-tested) + the
+`requires_approval` gate; orchestrator SKILL gained the **re-plan loop + grounding/citation pass +
+dynamic-fanout/approval** guidance; shipped example blueprints `gated-build` (approval) and
+`fanout-review` (dynamic fan-out). Deferred: per-spawn `requires_approval` on a single `spawn_agent`
+(redundant with blueprint gates; would add untested pause/resume surface for one call) and TUI/web
+approval buttons (the `agent-event` stream already carries `resumable-runs`; a panel is cosmetic).
+Original spec below.
+
 
 - **Fan-out + teams durability.** Give `spawn_agents` and `run_team` the same session (each task = a
   node-shaped event); resume re-fires only unfinished tasks. (Reuses `deriveState`; teams already run
