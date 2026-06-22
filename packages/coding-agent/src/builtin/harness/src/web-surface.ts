@@ -50,6 +50,8 @@ export function snapshot(vm: ViewModel) {
 		startedAt: vm.startedAt,
 		governor: vm.governor ?? null, // #1/#4 governor signals (null until a spawn surfaces them)
 		autoscale: vm.autoscale ?? null, // #3 latest autoscaler decisions (null unless the autoscaler is armed)
+		shed: vm.shed ?? null, // A1 load-shedding tally (null until the window goes hot under actuation)
+		burst: vm.burst ?? null, // A2 summoning fan-out tally (null until the first spawn)
 	};
 }
 
@@ -65,7 +67,15 @@ export function renderDashboardHtml(): string {
   *{box-sizing:border-box;margin:0;padding:0}
   body{font-family:monospace;background:#0d0d0d;color:#ccc;padding:16px}
   h1{color:#7eb8f7;font-size:1.1rem;margin-bottom:12px;letter-spacing:.05em}
-  #summary{color:#aaa;font-size:.85rem;margin-bottom:12px}
+  #summary{color:#aaa;font-size:.85rem;margin-bottom:8px}
+  #signals{display:flex;flex-wrap:wrap;gap:14px;font-size:.8rem;margin-bottom:12px}
+  .sig{color:#888}.sig b{color:#ccc;font-weight:600}
+  .bar{display:inline-block;width:90px;height:8px;background:#1a1a1a;border-radius:3px;vertical-align:middle;overflow:hidden}
+  .bar>i{display:block;height:100%;background:#7eb8f7}
+  .bar.hot>i{background:#e05c5c}.bar.warm>i{background:#c8d05c}
+  .shed{color:#e05c5c}
+  #fleet{font-size:.8rem;margin-bottom:12px;color:#888}
+  #fleet table{width:auto;margin-top:4px}
   table{width:100%;border-collapse:collapse;font-size:.82rem}
   th{text-align:left;color:#555;padding:3px 8px;border-bottom:1px solid #222}
   td{padding:3px 8px;border-bottom:1px solid #1a1a1a;vertical-align:top}
@@ -77,6 +87,8 @@ export function renderDashboardHtml(): string {
 <body>
 <h1>◆ Harness v2 — live dashboard</h1>
 <div id="summary">connecting…</div>
+<div id="signals"></div>
+<div id="fleet"></div>
 <table>
   <thead><tr><th>agent</th><th>model</th><th>status</th><th>tool</th><th>tools</th><th>verify</th><th>started</th></tr></thead>
   <tbody id="tbody"></tbody>
@@ -86,11 +98,47 @@ export function renderDashboardHtml(): string {
 function cls(status){return status==='running'?'run':status==='done'?'done':'bad'}
 function dot(status){return status==='running'?'dot-run':status==='done'?'dot-done':'dot-bad'}
 function ts(ms){return ms?new Date(ms).toISOString().slice(11,19):'—'}
+function esc(s){return String(s).replace(/[&<>]/g,function(c){return c==='&'?'&amp;':c==='<'?'&lt;':'&gt;'})}
+function barCls(p){return p>=85?'bar hot':p>=60?'bar warm':'bar'}
+
+// Governor gauges + load-shedding tally + summoning-burst count (A1/A4/A5). Additive: each block only
+// renders when the matching signal is present, so a pre-autoscaler run looks exactly as before.
+function renderSignals(state){
+  const el=document.getElementById('signals');
+  const g=state.governor, sh=state.shed, b=state.burst;
+  const parts=[];
+  if(g){
+    parts.push('<span class="sig">load <span class="'+barCls(g.loadPct)+'"><i style="width:'+Math.max(0,Math.min(100,g.loadPct))+'%"></i></span> <b>'+g.loadPct+'%</b></span>');
+    parts.push('<span class="sig">window <span class="'+barCls(g.windowPct)+'"><i style="width:'+Math.max(0,Math.min(100,g.windowPct))+'%"></i></span> <b>'+g.windowPct+'%</b></span>');
+    if(g.queued>0) parts.push('<span class="sig">queue <b>'+g.queued+'</b></span>');
+  }
+  if(sh&&sh.count>0){
+    const tag=(sh.from&&sh.to)?(' '+esc(sh.from)+'→'+esc(sh.to)):'';
+    parts.push('<span class="sig shed">shed <b>'+sh.count+'↓</b>'+tag+'</span>');
+  }
+  if(b&&b.count>0) parts.push('<span class="sig">summoned <b>'+b.count+'</b></span>');
+  el.innerHTML=parts.join('');
+}
+
+// Per-bundle autoscaler decisions (#3): pool current→target as the controller resizes each pool.
+function renderFleet(state){
+  const el=document.getElementById('fleet');
+  const ticks=state.autoscale;
+  if(!ticks||!ticks.length){el.innerHTML='';return}
+  let rows='';
+  for(const t of ticks){
+    const arrow=t.target>t.current?'↑':t.target<t.current?'↓':'·';
+    rows+='<tr><td>'+esc(t.bundle)+'</td><td>pool '+t.current+'→'+t.target+' '+arrow+'</td><td>'+esc(t.action)+'</td></tr>';
+  }
+  el.innerHTML='fleet — autoscaler decisions<table><tbody>'+rows+'</tbody></table>';
+}
 
 function render(state){
   const c=state.counts||{};
   document.getElementById('summary').textContent=
     'agents: '+c.total+' | running: '+c.run+' | ok: '+c.ok+' | bad: '+c.bad;
+  renderSignals(state);
+  renderFleet(state);
   const tbody=document.getElementById('tbody');
   tbody.innerHTML='';
   for(const a of (state.agents||[])){

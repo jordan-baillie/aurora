@@ -48,7 +48,9 @@ export interface FleetControllerOpts {
 	signals: (now?: number) => Map<string, DemandLike>;
 	poolStats: () => Array<PoolStatLike>;
 	setPoolTarget: (name: string, n: number) => boolean;
-	reapPool: (name: string, maxIdle: number) => number;
+	// PRECISE shrink: reap a pool down to exactly `target` workers (oldest-idle first). Named for what it
+	// does, not a vague maxIdle — the controller always knows the exact target it wants on a shrink.
+	reapToTarget: (name: string, target: number) => number;
 	prewarm: (b: AgentBundle) => Promise<unknown>;
 	onTick: (ticks: ControllerTick[]) => void;
 	now?: () => number;
@@ -94,7 +96,7 @@ export class FleetController {
 	private readonly signals: (now?: number) => Map<string, DemandLike>;
 	private readonly poolStats: () => Array<PoolStatLike>;
 	private readonly setPoolTarget: (name: string, n: number) => boolean;
-	private readonly reapPool: (name: string, maxIdle: number) => number;
+	private readonly reapToTarget: (name: string, target: number) => number;
 	private readonly prewarm: (b: AgentBundle) => Promise<unknown>;
 	private readonly onTick: (ticks: ControllerTick[]) => void;
 	private readonly now: () => number;
@@ -114,7 +116,7 @@ export class FleetController {
 		this.signals = opts.signals;
 		this.poolStats = opts.poolStats;
 		this.setPoolTarget = opts.setPoolTarget;
-		this.reapPool = opts.reapPool;
+		this.reapToTarget = opts.reapToTarget;
 		this.prewarm = opts.prewarm;
 		this.onTick = opts.onTick;
 		this.now = opts.now ?? (() => Date.now());
@@ -213,7 +215,7 @@ export class FleetController {
 			const b = this.registry.get(name);
 			if (b) void this.prewarm(b);
 		}
-		if (action === "shrink") this.reapPool(name, target);
+		if (action === "shrink") this.reapToTarget(name, target);
 		this.setPoolTarget(name, target);
 		c.lastTarget = target;
 		c.lastChangeAt = now;

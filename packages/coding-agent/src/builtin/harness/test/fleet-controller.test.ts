@@ -41,7 +41,7 @@ const fakeGov = (pct: number): WindowGovernor => ({ windowPct: () => pct }) as u
 interface Harness {
 	opts: FleetControllerOpts;
 	setCalls: Array<{ name: string; n: number }>;
-	reapCalls: Array<{ name: string; maxIdle: number }>;
+	reapCalls: Array<{ name: string; target: number }>;
 	prewarmed: AgentBundle[];
 	ticks: ControllerTick[][];
 	demand: Map<string, DemandLike>;
@@ -67,8 +67,8 @@ const makeHarness = (over: Partial<FleetControllerOpts> = {}): Harness => {
 			h.setCalls.push({ name, n });
 			return true;
 		},
-		reapPool: (name, maxIdle) => {
-			h.reapCalls.push({ name, maxIdle });
+		reapToTarget: (name, target) => {
+			h.reapCalls.push({ name, target });
 			return 0;
 		},
 		prewarm: async (b) => {
@@ -224,7 +224,7 @@ test("shrink reaps: demand drops ⇒ reapPool then setPoolTarget called", () => 
 	const ticks = fc.tick(1000);
 	assert.equal(ticks[0].action, "shrink");
 	assert.equal(ticks[0].target, 1);
-	assert.deepEqual(h.reapCalls, [{ name: "a", maxIdle: 1 }]);
+	assert.deepEqual(h.reapCalls, [{ name: "a", target: 1 }]);
 	assert.deepEqual(h.setCalls, [{ name: "a", n: 1 }]);
 });
 

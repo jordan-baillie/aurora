@@ -517,3 +517,31 @@ moment it exists; write/review it in parallel with M0, merge once M0's seams are
 **Do-first in every spine PR:** land the "behavior identical with defaults" test **before** touching
 logic (idea 1: the 4 existing governor tests; idea 2: the 7 frozen pool tests + the
 `min=max=target` identity test) so any accidental drift fails immediately.
+
+## Completion status — deferred slices closed (follow-up after `ad289ab6`)
+
+The slices consciously deferred in the first landing are now implemented (all still **off by default**;
+no flag flipped on). Each shipped with offline unit tests **plus** a real end-to-end test through the
+subprocess boundary.
+
+| Slice | What landed | Seam | Tests |
+|-------|-------------|------|-------|
+| **A1** load-shed actuation | `runOne` now threads an **effective bundle** `eb` (a tier-downshifted clone) through cache-key, `gov.admit` weight, exec, the `spawned` event, and the ledger when `shouldShed` fires under actuation; emits a `shedding` event and **forces oneshot** (a degraded-tier worker must never poison the name-keyed warm pool) | `extension/spawn-agent.ts` | `spawn-e2e` shedding case + `observe`/`web-surface` visibility |
+| **A2** summoning streak | `summonStreak(count, frame)` — a byte-stable, per-running-agent gradient streak on the header rail; pure `f(count,frame)`, painted only while `run>0` so `isAnimating`/jitter invariants hold | `src/observe.ts` | `observe.test.ts` (purity + quiesce) |
+| **A3** generated-DAG resume | `RunMeta` carries `generated` + the embedded `blueprint`; `plan_and_run` persists the DAG into `run_started`; `resumeRun` reconstructs from meta instead of `loadBlueprints` for generated runs | `src/runstore.ts`, `extension/spawn-agent.ts` | `runstore.test.ts` round-trip + `spawn-e2e` cross-process resume |
+| **A4** e2e suite | scripted `fixtures/fake-cli.mjs` (NDJSON `message_end`; json + rpc modes) as `SUMMON_BIN`; drives the real extension tools through real spawns with no provider/auth | `test/fixtures/`, `test/spawn-e2e.test.ts` | spawn_agent / spawn_quorum / plan_and_run (dry+live) / resume / shedding |
+| **A5** web signals | `snapshot()` adds `shed`/`burst`; `renderDashboardHtml` renders governor gauges + a fleet (autoscaler-decisions) table + shed/summoned tallies | `src/web-surface.ts` | `web-surface.test.ts` |
+| **A6** arrival signal | new pure `ArrivalTracker` (rolling 1m/5m rates + trend, order-independent counting); `fleetSignals` feeds real `arrivalRate1m`/`arrivalRateTrend` so `computeTarget`'s speculative slot + prewarm-on-rising-demand actually fire | `src/arrivals.ts`, `extension/spawn-agent.ts` | `arrivals.test.ts` |
+| **A7** precise shrink + runtime band | `WarmPool.reapToTarget(n)` (exact, TTL-agnostic shrink) + `WarmPool.setBand(min,max)`; transport `reapToTarget`/`setPoolBand` (live override applied to all pools); the controller injection renamed `reapPool(maxIdle)` → **`reapToTarget(target)`** (kills the misleading name); `/harness-scale` retunes the live pool band, single-sourcing the per-bundle ceiling | `src/pool.ts`, `src/pool-transport.ts`, `src/fleet-controller.ts`, `extension/spawn-agent.ts` | `pool.test.ts`, `pool-transport.test.ts`, `fleet-controller.test.ts` |
+
+**OAuth routing (operator note).** Every spawned worker — including the new `spawn_quorum`,
+`plan_and_run`, and shed/oneshot paths — funnels through the single `buildWorkerArgs` →
+`buildSystemPrompt` (always prefixed with `SYS_HEADER` = *"You are Claude Code, Anthropic's official
+CLI for Claude."*) and the fail-closed `assertSpawnAuth`. So $0-Max OAuth routing is **structural and
+single-sourced** — a new tool cannot bypass it. Forced-subscription deployments set
+`SUMMON_FORCE_OAUTH_ROUTING=1` to eject any `ANTHROPIC_API_KEY` and fail closed if one survives.
+
+**Still pending (process, not code) — must precede any default-on:** B1 re-run the pool bench
+(`bench/THRESHOLD-SWEEP`) after the acquire/transport changes; B2 run `HARNESS_AUTOSCALE=1`
+(observe-only) on a real workload and confirm sane targets before `HARNESS_AUTOSCALE_ACT=1`. B3 holds:
+nothing is default-on.

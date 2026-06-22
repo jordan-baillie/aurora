@@ -2,7 +2,16 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { counts, emptyVM, isAnimating, reduce, renderFooter, renderWidget, setExpanded } from "../src/observe.ts";
+import {
+	counts,
+	emptyVM,
+	isAnimating,
+	reduce,
+	renderFooter,
+	renderWidget,
+	setExpanded,
+	summonStreak,
+} from "../src/observe.ts";
 
 const feed = (events: any[]) => {
 	const vm = emptyVM();
@@ -209,4 +218,64 @@ test("renderWidget: byte-stable for identical (vm, frame)", () => {
 		{ t: "autoscale", id: "fleet", ticks: [{ bundle: "scout", current: 1, target: 2, action: "grow" }] },
 	]);
 	assert.deepEqual(renderWidget(vm, 72, 3), renderWidget(vm, 72, 3));
+});
+
+// ── load-shedding visibility (A1) ───────────────────────────────────────────────
+
+test("reduce: shedding event tallies count + remembers the from→to downshift", () => {
+	const vm = feed([
+		{ t: "shedding", id: "x", from: "frontier", to: "standard", reason: "hot", window_pct: 92 },
+		{ t: "shedding", id: "y", from: "standard", to: "fast", reason: "hot", window_pct: 95 },
+	]);
+	assert.equal(vm.shed?.count, 2);
+	assert.equal(vm.shed?.from, "standard");
+	assert.equal(vm.shed?.to, "fast");
+	assert.equal(vm.governor?.windowPct, 95, "shedding carries the window signal too");
+});
+
+test("reduce: shedding does NOT make isAnimating true (jitter invariant)", () => {
+	const vm = feed([{ t: "shedding", id: "x", from: "frontier", to: "standard", window_pct: 91 }]);
+	assert.equal(isAnimating(vm), false, "a shed with no running agent must still quiesce the timer");
+});
+
+test("renderWidget: shed indicator appears in the governor line", () => {
+	const vm = feed([
+		{ t: "spawned", id: "a", agent: "b", model: "standard", window_pct: 92, load_pct: 99, ts: 1 },
+		{ t: "shedding", id: "a", from: "frontier", to: "standard", window_pct: 92 },
+	]);
+	const lines = renderWidget(vm, 72, 0);
+	assert.ok(
+		lines.some((l) => l.includes("shed") && l.includes("frontier\u2192standard")),
+		"shed N↓ from→to is visible on the governor line",
+	);
+});
+
+// ── summoning fan-out streak (A2) ──────────────────────────────────────────────
+
+test("reduce: spawned increments the burst tally", () => {
+	const vm = feed([
+		{ t: "spawned", id: "a", agent: "s", model: "fast", ts: 1 },
+		{ t: "spawned", id: "b", agent: "s", model: "fast", ts: 2 },
+	]);
+	assert.equal(vm.burst?.count, 2);
+	assert.equal(vm.burst?.lastAt, 2);
+});
+
+test("summonStreak: pure function of (count, frame) — byte-stable, length scales with count", () => {
+	assert.equal(summonStreak(0, 5), "", "no streak with zero running");
+	assert.equal(summonStreak(3, 7), summonStreak(3, 7), "identical inputs ⇒ identical bytes");
+	// one › glyph per running agent (capped at 6); count the glyphs irrespective of color codes.
+	const glyphs = (s: string) => (s.match(/\u203a/g) ?? []).length;
+	assert.equal(glyphs(summonStreak(3, 0)), 3);
+	assert.equal(glyphs(summonStreak(99, 0)), 6, "capped at 6");
+});
+
+test("renderWidget: streak paints only while agents run (not once settled)", () => {
+	const running = feed([{ t: "spawned", id: "a", agent: "s", model: "fast", ts: 1 }]);
+	assert.ok(renderWidget(running, 72, 0)[0].includes("\u203a"), "running fan-out shows the streak on the header rail");
+	const settled = feed([
+		{ t: "spawned", id: "a", agent: "s", model: "fast", ts: 1 },
+		{ t: "done", id: "a", status: "done", ts: 2 },
+	]);
+	assert.ok(!renderWidget(settled, 72, 0)[0].includes("\u203a"), "settled run quiesces the streak");
 });

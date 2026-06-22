@@ -73,6 +73,39 @@ test("renderDashboardHtml contains valid HTML structure", () => {
 	assert.ok(html.includes("fetch("), "must fetch /state for initial render");
 });
 
+test("renderDashboardHtml renders the new governor/fleet/shed signals (A5)", () => {
+	const html = renderDashboardHtml();
+	assert.ok(html.includes('id="signals"'), "has a signals panel for governor/shed/burst");
+	assert.ok(html.includes('id="fleet"'), "has a fleet panel for autoscaler decisions");
+	assert.ok(html.includes("renderSignals"), "wires the governor/shed/burst renderer");
+	assert.ok(html.includes("renderFleet"), "wires the autoscaler-decisions renderer");
+});
+
+// ── snapshot: new signal fields (A5) ───────────────────────────────────────────
+
+test("snapshot exposes governor/autoscale/shed/burst (null until surfaced)", () => {
+	const vm = emptyVM();
+	const s0 = snapshot(vm);
+	assert.equal(s0.shed, null, "shed null before any shedding");
+	assert.equal(s0.burst, null, "burst null before any spawn");
+	assert.equal(s0.governor, null);
+	assert.equal(s0.autoscale, null);
+});
+
+test("snapshot carries shed + burst + governor once events surface them (A1/A5)", () => {
+	const vm = emptyVM();
+	reduce(vm, { t: "spawned", id: "a", agent: "b", model: "sonnet", window_pct: 92, load_pct: 99, ts: 1 });
+	reduce(vm, { t: "shedding", id: "a", from: "frontier", to: "standard", window_pct: 92 });
+	reduce(vm, { t: "autoscale", id: "fleet", ticks: [{ bundle: "b", current: 0, target: 2, action: "grow" }] });
+	const s = snapshot(vm);
+	assert.equal(s.burst?.count, 1);
+	assert.equal(s.shed?.count, 1);
+	assert.equal(s.shed?.from, "frontier");
+	assert.equal(s.shed?.to, "standard");
+	assert.equal(s.governor?.windowPct, 92);
+	assert.equal(s.autoscale?.length, 1);
+});
+
 // ── createWebSurface — host option ────────────────────────────────────────
 
 test("createWebSurface honours host", async () => {

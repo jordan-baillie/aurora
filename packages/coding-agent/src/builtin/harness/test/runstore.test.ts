@@ -26,6 +26,20 @@ test("runMeta reads the run_started self-describing meta", () => {
 	assert.equal(m?.kind, "blueprint");
 	assert.equal(m?.name, "demo");
 	assert.deepEqual(m?.vars, { a: "1" });
+	assert.equal(m?.generated, false, "non-generated runs default generated:false");
+	assert.equal(m?.blueprint, undefined);
+});
+
+test("runMeta round-trips a GENERATED blueprint embedded in run_started (A3)", () => {
+	const s = RunSession.create(runEventsPath(tmpRuns(), "g"));
+	const bp = {
+		name: "auto-xyz",
+		nodes: [{ id: "n1", agent: "scout", prompt: "do it" }],
+	};
+	s.append("run_started", { kind: "blueprint", name: bp.name, vars: {}, generated: true, blueprint: bp });
+	const m = runMeta(s.events());
+	assert.equal(m?.generated, true, "generated flag survives the log round-trip");
+	assert.deepEqual(m?.blueprint, bp, "the full DAG is reconstructable from the log alone (no disk)");
 });
 
 test("classifyRun: terminal done/failed → null; crashed (no finish) → crashed; paused → paused", () => {

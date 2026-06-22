@@ -28,6 +28,11 @@ export interface ViewModel {
 	// so a missing field never blanks a gauge; populated defensively from events that carry them.
 	governor?: { windowPct: number; loadPct: number; queued: number };
 	autoscale?: FleetTick[]; // latest per-bundle controller decisions (#3), when the autoscaler is armed
+	// Load-shedding (A1): when the window is hot the autoscaler degrades a spawn one tier. Surfaced so the
+	// silent quality trade-off is always VISIBLE (count + the most recent from→to downshift).
+	shed?: { count: number; from?: string; to?: string };
+	// Summoning fan-out (A2): a running tally of spawns + the last spawn ts, driving the header streak.
+	burst?: { count: number; lastAt: number };
 }
 
 export const emptyVM = (): ViewModel => ({ agents: new Map(), startedAt: Date.now() });
@@ -55,6 +60,15 @@ export function reduce(vm: ViewModel, e: any): void {
 				startedAt: e.ts ?? Date.now(),
 				timeline: [],
 			});
+			vm.burst = { count: (vm.burst?.count ?? 0) + 1, lastAt: e.ts ?? Date.now() };
+			captureGov(vm, e);
+			break;
+		case "shedding":
+			vm.shed = {
+				count: (vm.shed?.count ?? 0) + 1,
+				from: typeof e.from === "string" ? e.from : vm.shed?.from,
+				to: typeof e.to === "string" ? e.to : vm.shed?.to,
+			};
 			captureGov(vm, e);
 			break;
 		case "queued":
@@ -142,6 +156,22 @@ const GRAD: number[][] = [
 const SPIN = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]; // braille spinner for running agents
 const fg = (rgb: string, s: string) => `\x1b[38;2;${rgb}m${s}\x1b[0m`;
 const lerp = (a: number[], b: number[], t: number) => a.map((v, i) => Math.round(v + (b[i] - v) * t));
+// Summoning streak (A2): a short gradient trail of › glyphs "flying off" the SUMMON wordmark, one per
+// concurrently-running agent (capped). A PURE function of (count, frame) — same inputs ⇒ identical
+// bytes — so it can never reintroduce tmux jitter and only moves while agents are actually running
+// (renderWidget paints it only when run>0, and isAnimating is already true then).
+export function summonStreak(count: number, frame: number): string {
+	const len = Math.min(Math.max(0, Math.floor(count)), 6);
+	if (len === 0) return "";
+	let out = "";
+	for (let i = 0; i < len; i++) {
+		const t = (((frame + i * 2) % 18) / 18) * (GRAD.length - 1);
+		const k = Math.min(GRAD.length - 2, Math.floor(t));
+		const [r, g, b] = lerp(GRAD[k], GRAD[k + 1], t - k);
+		out += `\x1b[38;2;${r};${g};${b}m›\x1b[0m`;
+	}
+	return out;
+}
 // gradient text with an optional moving `phase` (0..1) so the banner can shimmer across frames.
 function gradText(s: string, phase = 0): string {
 	const n = Math.max(1, s.length);
@@ -247,7 +277,9 @@ export function renderWidget(vm: ViewModel, width: number = 72, frame = 0): stri
 	// header rail: ⬢ SUMMON (shimmering gradient) + coloured counts + elapsed
 	const mark = fg(PAL.muted, "⬢ ") + gradText("SUMMON", (frame % 60) / 60);
 	const stat = `${fg(PAL.run, `▸${run}`)} ${fg(PAL.done, `✓${ok}`)} ${fg(PAL.fail, `✗${bad}`)}`;
-	L.push(`${mark}  ${stat}  ${fg(PAL.border, "·")}  ${fg(PAL.muted, `⏱ ${elapsed}`)}`);
+	// header rail + a summoning streak per running agent (A2) — byte-stable, painted only while spawning.
+	const streak = run > 0 ? `  ${summonStreak(run, frame)}` : "";
+	L.push(`${mark}  ${stat}  ${fg(PAL.border, "·")}  ${fg(PAL.muted, `⏱ ${elapsed}`)}${streak}`);
 	// Governor gauge (#1/#4): weighted load + rolling-window budget + queue depth. Rendered above the
 	// agents panel (and even with zero agents) when any spawn has surfaced governor signals. Static —
 	// a pure function of vm, so it never arms a timer or trips isAnimating.
@@ -261,6 +293,11 @@ export function renderWidget(vm: ViewModel, width: number = 72, frame = 0): stri
 			gauge(g.windowPct) +
 			fg(PAL.muted, ` ${g.windowPct}%`);
 		if (g.queued > 0) line += fg(PAL.muted, "   queue ") + fg(PAL.run, String(g.queued));
+		// Load-shedding indicator (A1): make the degrade-to-cheaper-tier trade-off impossible to miss.
+		if (vm.shed && vm.shed.count > 0) {
+			const tag = vm.shed.from && vm.shed.to ? `${vm.shed.from}→${vm.shed.to}` : "tier";
+			line += fg(PAL.muted, "   shed ") + fg(PAL.fail, `${vm.shed.count}↓ ${tag}`);
+		}
 		L.push(line);
 	}
 	if (total === 0) return L; // drill-in pinned but no agents yet: header (+ gauge) only

@@ -129,6 +129,38 @@ export class WarmPool<W extends PooledWorker> {
 		this.target = Math.min(Math.max(Math.floor(n), this.min), this.max);
 	}
 
+	// Runtime band retune (#4 scale dial): widen/narrow [min,max] and re-clamp target into the new band.
+	// Lazy like setTarget — no eager spawn/destroy; acquire grows toward the new max, the reapers shrink
+	// toward the new min. min is clamped to ≤ max and target into [min,max] so the band can never invert.
+	setBand(min: number, max: number): void {
+		this.max = Math.max(1, Math.floor(max));
+		this.min = Math.max(0, Math.min(Math.floor(min), this.max));
+		this.target = Math.min(Math.max(this.target, this.min), this.max);
+	}
+
+	// PRECISE shrink: destroy idle workers until total ≤ max(target,0). Unlike reapIdle (TTL-driven,
+	// floors at min), this honours an exact size the autoscaler computed — it reduces straight to the
+	// target, oldest-idle first, never touching busy workers (so total can't drop below busy.size).
+	// Returns the number reaped; no-op while draining. Synchronous snapshot→mutation, like reapIdle.
+	async reapToTarget(target: number): Promise<number> {
+		if (this.draining) return 0;
+		const want = Math.max(0, Math.floor(target));
+		let excess = this.idle.length + this.busy.size - want;
+		if (excess <= 0) return 0;
+		const keep: W[] = [];
+		let reaped = 0;
+		for (const w of this.idle) {
+			if (excess > 0) {
+				w.destroy();
+				this.idleSince.delete(w);
+				excess--;
+				reaped++;
+			} else keep.push(w);
+		}
+		this.idle = keep;
+		return reaped;
+	}
+
 	// Destroy idle workers idle for ≥ ttlMs, down to at most `min` retained. Never touches busy
 	// workers; no-op while draining. Snapshot→idle mutation is fully synchronous so the JS single
 	// thread serializes this against acquire (no worker can be reaped mid-handout).

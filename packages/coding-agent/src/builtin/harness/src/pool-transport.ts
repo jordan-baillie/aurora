@@ -24,14 +24,31 @@ export interface PoolOpts {
 const POOLS = new Map<string, WarmPool<RpcWorker>>();
 const POOL_SIZE = Math.max(1, Number(process.env.HARNESS_POOL_SIZE ?? 4));
 
-// Elastic band from env. HARNESS_POOL_SIZE remains the default for both min and max so an unset env
-// is identical to the pre-elastic fixed pool; HARNESS_POOL_MIN/MAX widen the band when set.
+// Runtime band override (#4 scale dial). null ⇒ the env-derived band below. setPoolBand() installs one
+// and retunes every live pool so /harness-scale takes effect immediately, not just for pools created
+// after the dial moved.
+let BAND_OVERRIDE: { min: number; max: number } | null = null;
+
+// Elastic band. HARNESS_POOL_SIZE remains the default for both min and max so an unset env is identical
+// to the pre-elastic fixed pool; HARNESS_POOL_MIN/MAX widen the band when set. A runtime override (the
+// scale dial) wins over the env so the live band is single-sourced through this one function.
 export const poolBand = (): { min: number; max: number } => {
+	if (BAND_OVERRIDE) return BAND_OVERRIDE;
 	const cap = Math.max(1, Number(process.env.HARNESS_POOL_SIZE ?? 4));
 	const max = Math.max(1, Number(process.env.HARNESS_POOL_MAX ?? cap));
 	const min = Math.max(0, Math.min(Number(process.env.HARNESS_POOL_MIN ?? cap), max));
 	return { min, max };
 };
+
+// Retune the live pool band at runtime (the scale dial). Clamps min ≤ max, installs the override so
+// future pools inherit it, and re-bands every existing pool. Returns the applied band.
+export function setPoolBand(min: number, max: number): { min: number; max: number } {
+	const hi = Math.max(1, Math.floor(max));
+	const lo = Math.max(0, Math.min(Math.floor(min), hi));
+	BAND_OVERRIDE = { min: lo, max: hi };
+	for (const p of POOLS.values()) p.setBand(lo, hi);
+	return BAND_OVERRIDE;
+}
 
 // Bundles whose pool has been PRE-WARMED (standing idle rpc workers, cold-start tax pre-paid).
 // Once a bundle is pre-warmed the adaptive batch threshold no longer applies — the pool wins at any
@@ -128,6 +145,7 @@ export async function drainAllPools(): Promise<void> {
 	for (const p of POOLS.values()) await p.drain();
 	POOLS.clear();
 	PREWARMED.clear();
+	BAND_OVERRIDE = null; // reset the runtime scale-dial band so a fresh session starts from env
 }
 
 // ── Autoscaler control seams ──────────────────────────────────────────────────
@@ -157,6 +175,17 @@ export function setPoolTarget(name: string, n: number): boolean {
 export function reapPool(name: string, ttlMs: number): Promise<number> {
 	const p = POOLS.get(name);
 	return p ? p.reapIdle(Date.now(), ttlMs) : Promise.resolve(0);
+}
+
+/**
+ * PRECISE shrink: reap one pool's idle workers until its total ≤ `target` (the exact size the
+ * autoscaler computed), oldest-idle first, never touching busy workers. Resolves to the number reaped
+ * (0 if no pool by that name). This is what the controller drives on a 'shrink' decision — unlike
+ * reapPool(…,0) it stops at the target instead of collapsing to min.
+ */
+export function reapToTarget(name: string, target: number): Promise<number> {
+	const p = POOLS.get(name);
+	return p ? p.reapToTarget(target) : Promise.resolve(0);
 }
 
 /** Reap idle workers older than `ttlMs` across every pool. Returns the per-pool reaped counts. */

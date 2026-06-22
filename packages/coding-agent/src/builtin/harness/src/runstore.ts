@@ -8,6 +8,7 @@
 
 import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+import type { Blueprint } from "./blueprint.ts";
 import { blueprintResume, deriveState, pendingApprovals, type RunEvent, readEvents } from "./session.ts";
 
 export type RunKind = "blueprint" | "fanout" | "team" | "spawn";
@@ -17,6 +18,10 @@ export interface RunMeta {
 	kind: RunKind;
 	name: string; // blueprint/team name, or the agent for a single spawn
 	vars?: Record<string, string>; // templating vars (blueprint/team) — replayed on resume
+	// Auto-planner runs (#5): a GENERATED blueprint isn't on disk, so loadBlueprints can't find it on a
+	// cross-process resume. The full DAG is embedded here so resume reconstructs it from the log alone.
+	generated?: boolean;
+	blueprint?: Blueprint;
 }
 
 // Deterministic, filesystem-safe run id. Time-suffixed so repeated runs of the same target are
@@ -39,7 +44,13 @@ export function runMeta(events: RunEvent[]): RunMeta | null {
 	if (!e) return null;
 	const kind = e.kind as RunKind;
 	if (!kind || typeof e.name !== "string") return null;
-	return { kind, name: e.name, vars: (e.vars as Record<string, string>) ?? {} };
+	return {
+		kind,
+		name: e.name,
+		vars: (e.vars as Record<string, string>) ?? {},
+		generated: e.generated === true,
+		blueprint: (e.blueprint as Blueprint | undefined) ?? undefined,
+	};
 }
 
 export interface ResumableRun {

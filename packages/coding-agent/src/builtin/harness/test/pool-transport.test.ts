@@ -15,6 +15,8 @@ import {
 	poolFor,
 	poolStatsAll,
 	reapAllPools,
+	reapToTarget,
+	setPoolBand,
 } from "../src/pool-transport.ts";
 
 // Minimal valid bundles — only fields required by AgentBundle.
@@ -170,6 +172,64 @@ test("poolStatsAll / reapAllPools iterate the registry", async () => {
 		// reapAllPools maps each pool → reaped count; lazy pools have nothing idle to reap.
 		const reaped = await reapAllPools(Date.now(), 0);
 		assert.deepEqual(reaped, [0, 0], "no idle workers ⇒ zero reaped per pool");
+	} finally {
+		await drainAllPools();
+	}
+});
+
+// ── setPoolBand / reapToTarget (A7: runtime scale-dial band + precise shrink seam) ──────────────
+
+test("setPoolBand installs a runtime override that poolBand() returns", async () => {
+	try {
+		const applied = setPoolBand(1, 9);
+		assert.deepEqual(applied, { min: 1, max: 9 });
+		assert.deepEqual(poolBand(), { min: 1, max: 9 }, "override wins over the env band");
+	} finally {
+		await drainAllPools(); // resets the override
+	}
+	assert.notDeepEqual(poolBand(), { min: 1, max: 9 }, "drain clears the override → env band restored");
+});
+
+test("setPoolBand clamps an inverted request (min ≤ max)", async () => {
+	try {
+		const applied = setPoolBand(7, 3);
+		assert.ok(applied.min <= applied.max, "never inverts");
+		assert.equal(applied.max, 3);
+		assert.equal(applied.min, 3);
+	} finally {
+		await drainAllPools();
+	}
+});
+
+test("setPoolBand re-bands every EXISTING pool immediately", async () => {
+	try {
+		const p = poolFor(b1); // lazy; no workers spawned
+		const before = p.stats();
+		setPoolBand(0, before.max + 5);
+		assert.equal(p.stats().max, before.max + 5, "live pool picked up the new ceiling");
+	} finally {
+		await drainAllPools();
+	}
+});
+
+test("new pools created after setPoolBand inherit the override band", async () => {
+	try {
+		setPoolBand(0, 6);
+		const p = poolFor(b2);
+		assert.equal(p.stats().max, 6, "freshly-created pool uses the override band");
+	} finally {
+		await drainAllPools();
+	}
+});
+
+test("reapToTarget on an unknown pool resolves 0", async () => {
+	assert.equal(await reapToTarget("nope", 0), 0);
+});
+
+test("reapToTarget delegates to the named pool (no idle ⇒ 0)", async () => {
+	try {
+		poolFor(b1); // lazy: zero workers
+		assert.equal(await reapToTarget("pool-test-a", 0), 0, "nothing idle to reap");
 	} finally {
 		await drainAllPools();
 	}

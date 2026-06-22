@@ -349,3 +349,75 @@ test("reapIdle is a no-op while draining", async () => {
 	const reaped = await pool.reapIdle(clock.now(), 0);
 	assert.equal(reaped, 0, "reapIdle short-circuits while draining");
 });
+
+// ── reapToTarget (A7: precise, target-driven shrink) ─────────────────────────────
+
+test("reapToTarget shrinks idle to exactly the target (TTL-agnostic, below min)", async () => {
+	const factory = new FakeFactory();
+	const pool = new WarmPool(factory, { min: 0, max: 5, target: 5 });
+	const ws = await Promise.all([pool.acquire(), pool.acquire(), pool.acquire(), pool.acquire()]);
+	for (const w of ws) await pool.release(w); // 4 idle, 0 busy
+	assert.equal(pool.stats().total, 4);
+
+	const reaped = await pool.reapToTarget(1);
+	assert.equal(reaped, 3, "reduced 4 → 1 regardless of TTL");
+	assert.equal(pool.stats().total, 1, "total is exactly the target");
+	assert.equal(pool.stats().idle, 1);
+});
+
+test("reapToTarget never reaps below busy and never touches busy workers", async () => {
+	const factory = new FakeFactory();
+	const pool = new WarmPool(factory, { min: 0, max: 5, target: 5 });
+	const busy = await pool.acquire(); // stays busy
+	const idleOnes = await Promise.all([pool.acquire(), pool.acquire()]);
+	for (const w of idleOnes) await pool.release(w); // 2 idle, 1 busy → total 3
+
+	const reaped = await pool.reapToTarget(0); // want 0, but 1 is busy
+	assert.equal(reaped, 2, "only the 2 idle workers are reapable");
+	assert.equal(pool.stats().busy, 1, "the busy worker is untouched");
+	assert.equal(busy.destroyed, false, "busy worker not destroyed");
+	assert.equal(pool.stats().total, 1, "total floors at busy.size");
+});
+
+test("reapToTarget is a no-op when total ≤ target, and while draining", async () => {
+	const factory = new FakeFactory();
+	const pool = new WarmPool(factory, { min: 0, max: 3, target: 3 });
+	const w = await pool.acquire();
+	await pool.release(w); // 1 idle
+	assert.equal(await pool.reapToTarget(3), 0, "already at/under target → nothing reaped");
+	await pool.drain();
+	assert.equal(await pool.reapToTarget(0), 0, "draining short-circuits");
+});
+
+// ── setBand (A7: runtime band retune) ────────────────────────────────────────────
+
+test("setBand widens the band so target can grow past the old max", async () => {
+	const factory = new FakeFactory();
+	const pool = new WarmPool(factory, { min: 1, max: 2, target: 2 });
+	pool.setTarget(10);
+	assert.equal(pool.stats().target, 2, "clamped to the old max first");
+	pool.setBand(0, 8);
+	pool.setTarget(10);
+	const s = pool.stats();
+	assert.equal(s.max, 8);
+	assert.equal(s.min, 0);
+	assert.equal(s.target, 8, "target now grows to the new max");
+});
+
+test("setBand re-clamps an out-of-band target into the narrowed band", () => {
+	const factory = new FakeFactory();
+	const pool = new WarmPool(factory, { min: 0, max: 8, target: 8 });
+	pool.setBand(0, 3);
+	assert.equal(pool.stats().target, 3, "target pulled down into the new band");
+	assert.equal(pool.stats().max, 3);
+});
+
+test("setBand keeps min ≤ max even with an inverted request", () => {
+	const factory = new FakeFactory();
+	const pool = new WarmPool(factory, { min: 0, max: 4, target: 2 });
+	pool.setBand(9, 3); // min > max requested
+	const s = pool.stats();
+	assert.ok(s.min <= s.max, "band never inverts");
+	assert.equal(s.max, 3);
+	assert.equal(s.min, 3, "min clamped down to max");
+});

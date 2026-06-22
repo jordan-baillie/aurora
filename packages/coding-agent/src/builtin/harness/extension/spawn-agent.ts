@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Type } from "typebox";
 import type { ExtensionAPI } from "../../../index.ts";
+import { ArrivalTracker } from "../src/arrivals.ts";
 import {
 	type Blueprint,
 	type BlueprintExec,
@@ -37,7 +38,7 @@ import {
 	writeRegistryIndex,
 } from "../src/core.ts";
 import { aggregateFleet, appendFleetEntry, auditPrompt, fleetDigest, readFleet } from "../src/fleet.ts";
-import { type DemandLike, FleetController } from "../src/fleet-controller.ts";
+import { type DemandLike, FleetController, type ShedDecision } from "../src/fleet-controller.ts";
 import { FLEET_LEDGER, FLEET_SUMMARY, REGISTRY_INDEX, RUNS_DIR } from "../src/paths.ts";
 import {
 	drainAllPools,
@@ -45,7 +46,8 @@ import {
 	pickTransport,
 	poolStatsAll,
 	prewarm,
-	reapPool,
+	reapToTarget,
+	setPoolBand,
 	setPoolTarget,
 	spawnViaPool,
 } from "../src/pool-transport.ts";
@@ -170,20 +172,24 @@ export default function harness(summon: ExtensionAPI) {
 	const AUTOSCALE = process.env.HARNESS_AUTOSCALE === "1";
 	const AUTOSCALE_ACT = process.env.HARNESS_AUTOSCALE_ACT === "1";
 	// Live per-bundle demand for the controller: inflight = admitted & running; waiting = queued on the
-	// governor. Arrival-rate trend is not yet tracked (0) — computeTarget still sizes to inflight+queued.
+	// governor; arrival rate/trend = a real rolling-window signal (A6) so computeTarget's speculative slot
+	// and prewarm-on-rising-demand actually fire instead of seeing a hardcoded 0.
 	const inflightByBundle = new Map<string, number>();
 	const waitingByBundle = new Map<string, number>();
+	const arrivals = new ArrivalTracker();
 	const bump = (m: Map<string, number>, k: string, d: number) => m.set(k, Math.max(0, (m.get(k) ?? 0) + d));
-	const fleetSignals = (): Map<string, DemandLike> => {
+	const fleetSignals = (now: number = Date.now()): Map<string, DemandLike> => {
 		const out = new Map<string, DemandLike>();
-		for (const n of new Set([...inflightByBundle.keys(), ...waitingByBundle.keys()]))
+		for (const n of new Set([...inflightByBundle.keys(), ...waitingByBundle.keys(), ...arrivals.bundles()])) {
+			const rates = arrivals.rates(n, now);
 			out.set(n, {
 				bundle: n,
 				inflight: inflightByBundle.get(n) ?? 0,
 				queued: waitingByBundle.get(n) ?? 0,
-				arrivalRate1m: 0,
-				arrivalRateTrend: 0,
+				arrivalRate1m: rates.rate1m,
+				arrivalRateTrend: rates.trend,
 			});
+		}
 		return out;
 	};
 	const fleet = AUTOSCALE
@@ -197,10 +203,10 @@ export default function harness(summon: ExtensionAPI) {
 				signals: fleetSignals,
 				poolStats: () => poolStatsAll().map((p) => ({ name: p.name, total: p.total, idle: p.idle, busy: p.busy })),
 				setPoolTarget: (name, n) => setPoolTarget(name, n),
-				// Shrink: reap idle workers above the pool's min immediately (ttl 0). FleetController ignores
-				// the return; the async reap is fire-and-forget.
-				reapPool: (name, _maxIdle) => {
-					void reapPool(name, 0);
+				// Shrink PRECISELY: reap idle workers down to exactly the controller's target (not all the way
+				// to min). FleetController ignores the return; the async reap is fire-and-forget.
+				reapToTarget: (name, target) => {
+					void reapToTarget(name, target);
 					return 0;
 				},
 				prewarm: (b) => prewarm([b], { root, protected: protectedList }),
@@ -250,27 +256,52 @@ export default function harness(summon: ExtensionAPI) {
 		const b = registry.get(agent);
 		if (!b) return { agent, status: "failed", error: `no such agent '${agent}'. have: ${names}` };
 		const emit = (e: any) => summon.events?.emit?.("agent-event", { id: task_id, agent, ts: Date.now(), ...e });
-		// Resolve transport: explicit wins; when the autoscaler is ACTUATING it routes from live saturation,
-		// otherwise a pre-warmed bundle uses its hot pool, else oneshot (observe-only keeps this byte-identical).
-		const t =
-			transport ?? (fleet && AUTOSCALE_ACT ? fleet.routeTransport(b) : isPrewarmed(agent) ? "pool" : "oneshot");
-		const cacheable = !!cache && isCacheable(b);
-		const key = cacheable ? cacheKey(b, prompt, verify) : "";
+		arrivals.record(agent); // a fresh task = an arrival (feeds the autoscaler's arrival-rate/trend signal)
+		// Load-shedding (A1): when ACTUATING and the rolling window is hot, degrade THIS spawn one tier so a
+		// budget-saturated burst keeps progressing on a cheaper model instead of stalling at the governor. `eb`
+		// is the EFFECTIVE bundle (a tier-downshifted clone) threaded through everything that depends on the
+		// tier — admit weight, cache key, exec, the spawned event, and the ledger — so they stay consistent.
+		let eb = b;
+		let shed: ShedDecision | null = null;
+		if (fleet && AUTOSCALE_ACT) {
+			const dec = fleet.shouldShed(b);
+			if (dec.shed && dec.tier && dec.tier !== b.model_tier) {
+				eb = { ...b, model_tier: dec.tier };
+				shed = dec;
+			}
+		}
+		// Resolve transport: a shed spawn forces oneshot — the warm pool is keyed by bundle NAME, so reusing it
+		// with a downshifted tier would poison later full-tier spawns of the same name. Otherwise: explicit
+		// wins; when ACTUATING route from live saturation; else a pre-warmed bundle uses its hot pool, else
+		// oneshot (observe-only keeps this byte-identical).
+		const t = shed
+			? "oneshot"
+			: (transport ?? (fleet && AUTOSCALE_ACT ? fleet.routeTransport(b) : isPrewarmed(agent) ? "pool" : "oneshot"));
+		const cacheable = !!cache && isCacheable(eb);
+		const key = cacheable ? cacheKey(eb, prompt, verify) : "";
 		// Fast path: a stored cache hit returns instantly — no governor slot, no spawn, zero token spend.
 		if (cacheable) {
 			const hit = cache!.peek(key);
 			if (hit) {
 				emit({ t: "done", status: hit.status, verify: hit.verify?.passed, cached: "cache" });
-				logSpawn(b, hit, 0);
+				logSpawn(eb, hit, 0);
 				return hit;
 			}
 		}
 		// Reserve an APPROXIMATE pre-admission token estimate (input-only; output bytes unknown until the
 		// spawn completes) — reconciled when release() runs in the finally. The admit hooks surface the
 		// queue/admit transitions on the same agent-event bus the dashboard + autoscaler consume.
+		if (shed)
+			emit({
+				t: "shedding",
+				from: b.model_tier,
+				to: eb.model_tier,
+				reason: shed.reason,
+				window_pct: gov.windowPct(),
+			});
 		const reserve = estimateTokens(prompt.length);
 		bump(waitingByBundle, agent, 1); // queued on the governor (autoscaler demand signal)
-		const release = await gov.admit(b, {
+		const release = await gov.admit(eb, {
 			reserveTokens: reserve,
 			onQueued: (info) =>
 				emit({ t: "queued", queue_depth: info.queueDepth, window_pct: gov.windowPct(), load_pct: gov.loadPct() }),
@@ -279,19 +310,19 @@ export default function harness(summon: ExtensionAPI) {
 		});
 		bump(waitingByBundle, agent, -1);
 		bump(inflightByBundle, agent, 1); // admitted & running
-		emit({ t: "spawned", model: b.model_tier, window_pct: gov.windowPct(), load_pct: gov.loadPct() }); // -> the observability dashboard
+		emit({ t: "spawned", model: eb.model_tier, window_pct: gov.windowPct(), load_pct: gov.loadPct() }); // -> the observability dashboard
 		fleet?.onAgentEvent({ t: "spawned" }); // event-driven scale nudge so a burst doesn't wait a full tick
 		try {
 			const exec = () =>
 				t === "pool"
-					? spawnViaPool(b, prompt, {
+					? spawnViaPool(eb, prompt, {
 							runDir: runDir(ctx),
 							taskId: task_id,
 							verify,
 							protected: protectedList,
 							root,
 						})
-					: spawnAgent(b, prompt, {
+					: spawnAgent(eb, prompt, {
 							runDir: runDir(ctx),
 							taskId: task_id,
 							verify,
@@ -313,7 +344,7 @@ export default function harness(summon: ExtensionAPI) {
 			}
 			// Only a real execution (a cache MISS) spends window tokens; hits/dedups cost nothing.
 			const spent = source === "miss" ? estimateTokens(prompt.length + (r.meta?.bytes ?? 0)) : 0;
-			logSpawn(b, r, spent);
+			logSpawn(eb, r, spent);
 			emit({ t: "done", status: r.status, verify: r.verify?.passed, window_pct: gov.windowPct(), cached: r.cached });
 			return r;
 		} catch (err) {
@@ -668,7 +699,10 @@ export default function harness(summon: ExtensionAPI) {
 		if (!meta) return { text: `run '${runId}' has no run_started — cannot resume`, isError: true };
 		const session = RunSession.resume(path);
 		if (meta.kind === "blueprint") {
-			const bp = loadBlueprints(registry, process.cwd()).get(meta.name);
+			// A3: a GENERATED DAG is reconstructed from the embedded meta (it was never written to disk); a
+			// named blueprint is still loaded from disk by name.
+			const bp =
+				meta.generated && meta.blueprint ? meta.blueprint : loadBlueprints(registry, process.cwd()).get(meta.name);
 			if (!bp) return { text: `blueprint '${meta.name}' no longer exists`, isError: true };
 			const outcome = await executeBlueprint(bp, meta.vars ?? {}, ctx, session, blueprintResume(events));
 			const failed = outcome.nodes.some((n) => n.status === "failed" || n.status === "skipped");
@@ -841,7 +875,14 @@ export default function harness(summon: ExtensionAPI) {
 				details: { blueprint: bp, notes: holder.notes },
 				isError: false,
 			};
-		const { session, runId } = startRun("blueprint", bp.name, { vars: vars ?? {}, generated: true }, ctx);
+		// Embed the generated DAG in the run meta (A3): a synthesized blueprint isn't on disk, so a
+		// cross-process resume after a crash reconstructs it from the log instead of loadBlueprints.
+		const { session, runId } = startRun(
+			"blueprint",
+			bp.name,
+			{ vars: vars ?? {}, generated: true, blueprint: bp },
+			ctx,
+		);
 		const outcome = await executeBlueprint(bp, vars ?? {}, ctx, session);
 		const failed = outcome.nodes.some((n) => n.status === "failed" || n.status === "skipped");
 		return {
@@ -1002,7 +1043,11 @@ export default function harness(summon: ExtensionAPI) {
 				budgetTokens: Number(process.env.HARNESS_WINDOW_TOKENS ?? 0),
 			});
 			gov.setMaxWeight(params.maxWeight);
-			fleet?.setMaxPerBundle(Math.max(params.poolSize, params.maxWeight));
+			// Single-source the per-bundle ceiling across the governor's autoscaler dial AND the live pool band,
+			// so a runtime scale change resizes existing pools immediately (A7) — not only pools created later.
+			const cap = Math.max(params.poolSize, params.maxWeight);
+			fleet?.setMaxPerBundle(cap);
+			setPoolBand(0, cap);
 			summon.events?.emit?.("agent-event", {
 				id: "fleet",
 				agent: "harness",
