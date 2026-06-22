@@ -405,6 +405,41 @@ describe("ToolExecutionComponent parity", () => {
 		}
 	});
 
+	test("keyed tool card (command-bridge): [ TOOL ] title + DONE state, fills width exactly", () => {
+		setTheme("command-bridge");
+		try {
+			const toolDefinition: ToolDefinition = {
+				...createBaseToolDefinition("bash"),
+				renderCall: () => new Text("echo hi", 0, 0),
+			};
+			const component = new ToolExecutionComponent(
+				"bash",
+				"tool-keyed",
+				{},
+				{},
+				toolDefinition,
+				createFakeTui(),
+				process.cwd(),
+			);
+			component.updateResult({ content: [{ type: "text", text: "hi" }], details: {}, isError: false }, false);
+			const plain = component
+				.render(60)
+				.map((l) => stripAnsi(l))
+				.filter((l) => l.length > 0);
+			const top = plain.find((l) => l.includes("bash")) ?? "";
+			expect(top).toContain("[ TOOL ]"); // keyed title cell
+			expect(top.startsWith("╔")).toBe(true); // heavy console frame
+			const bottom = plain[plain.length - 1];
+			expect(bottom).toContain("DONE"); // right-aligned state word
+			// every heavy-framed line is exactly the requested width (no off-by-one)
+			for (const l of plain) {
+				if (/^[╔║╚]/.test(l)) expect(visibleWidth(l)).toBe(60);
+			}
+		} finally {
+			setTheme("dark");
+		}
+	});
+
 	// ── REGRESSION: completed cards must FREEZE their elapsed clock ──────────────────────────
 	// A finished tool card's footer is computed from Date.now() while running; once complete it must
 	// switch to a frozen endTimeMs. If it keeps using Date.now(), every already-completed (and usually

@@ -30,7 +30,12 @@ type ColorValue = Static<typeof ColorValueSchema>;
 const GlyphValueSchema = Type.String();
 const NumberSchema = Type.Number();
 
-const RoleStyleSchema = Type.Union([Type.Literal("none"), Type.Literal("smallcaps"), Type.Literal("bracket")]);
+const RoleStyleSchema = Type.Union([
+	Type.Literal("none"),
+	Type.Literal("smallcaps"),
+	Type.Literal("bracket"),
+	Type.Literal("hud"),
+]);
 
 const MessageStyleSchema = Type.Union([
 	Type.Literal("fill"),
@@ -39,9 +44,18 @@ const MessageStyleSchema = Type.Union([
 	Type.Literal("box"),
 ]);
 
-const ToolBlockStyleSchema = Type.Union([Type.Literal("fill"), Type.Literal("indent"), Type.Literal("ascii-box")]);
+const ToolBlockStyleSchema = Type.Union([
+	Type.Literal("fill"),
+	Type.Literal("indent"),
+	Type.Literal("ascii-box"),
+	Type.Literal("keyed"),
+]);
 
-const InputAreaStyleSchema = Type.Union([Type.Literal("border-fill"), Type.Literal("rules-only")]);
+const InputAreaStyleSchema = Type.Union([
+	Type.Literal("border-fill"),
+	Type.Literal("rules-only"),
+	Type.Literal("cmd-cell"),
+]);
 
 const GlyphsSchema = Type.Optional(
 	Type.Object({
@@ -93,11 +107,13 @@ const LayoutSchema = Type.Optional(
 		assistantRoleLabel: Type.Optional(Type.String()),
 		toolGutter: Type.Optional(NumberSchema),
 		blankLineBetweenTurns: Type.Optional(NumberSchema),
-		footerStyle: Type.Optional(Type.Union([Type.Literal("two-line"), Type.Literal("single-line")])),
+		footerStyle: Type.Optional(
+			Type.Union([Type.Literal("two-line"), Type.Literal("single-line"), Type.Literal("hud-strip")]),
+		),
 		footerSeparator: Type.Optional(GlyphValueSchema),
 		spinnerStyle: Type.Optional(Type.Union([Type.Literal("dots"), Type.Literal("wave")])),
 		bannerAnimation: Type.Optional(
-			Type.Union([Type.Literal("none"), Type.Literal("comet"), Type.Literal("constellation")]),
+			Type.Union([Type.Literal("none"), Type.Literal("comet"), Type.Literal("constellation"), Type.Literal("boot")]),
 		),
 
 		asciiOnly: Type.Optional(Type.Boolean()),
@@ -189,16 +205,16 @@ type ThemeJson = Static<typeof ThemeJsonSchema>;
 /** Style variants for message bubble rendering. */
 export type MessageStyle = "fill" | "rule" | "bracket" | "box";
 /** Style variants for tool-call block rendering. */
-export type ToolBlockStyle = "fill" | "indent" | "ascii-box";
+export type ToolBlockStyle = "fill" | "indent" | "ascii-box" | "keyed";
 /** Style variants for the input-area chrome. */
-export type InputAreaStyle = "border-fill" | "rules-only";
+export type InputAreaStyle = "border-fill" | "rules-only" | "cmd-cell";
 /** Style variants for role-label headers. */
-export type RoleStyle = "none" | "smallcaps" | "bracket";
+export type RoleStyle = "none" | "smallcaps" | "bracket" | "hud";
 /** Style variants for the footer row. */
-export type FooterStyle = "two-line" | "single-line";
+export type FooterStyle = "two-line" | "single-line" | "hud-strip";
 /** Working-loader spinner: `dots` = single breathing glyph; `wave` = summon ribbon. */
 export type SpinnerStyle = "dots" | "wave";
-export type BannerAnimation = "none" | "comet" | "constellation";
+export type BannerAnimation = "none" | "comet" | "constellation" | "boot";
 
 /** Keys for the string-valued glyph table (excludes spinnerFrames / spinnerIntervalMs). */
 export type GlyphName =
@@ -902,6 +918,7 @@ export class Theme {
 	summonBannerCometFrames(): string[] | undefined {
 		const anim = this.resolvedLayout.bannerAnimation;
 		if (anim === "constellation") return this.summonBannerConstellationFrames();
+		if (anim === "boot") return this.summonBannerBootFrames();
 		if (anim !== "comet") return undefined;
 		const banner = this.resolvedBanner;
 		const ramp = this.resolvedGradient;
@@ -1027,6 +1044,68 @@ export class Theme {
 				for (let c = 0; c < GC; c++) {
 					const cell = grid[r * GC + c];
 					line += cell ? this.colorizeHex(cell.col, cell.ch) : " ";
+				}
+				out.push(line);
+			}
+			frames.push(out.join("\n"));
+		}
+		return frames;
+	}
+
+	/**
+	 * Boot-sequence banner (command-bridge): the wordmark holds a static gradient while the boot strip's
+	 * ‹…› segments light up left-to-right in order, then hold lit (loops as a slow console heartbeat). Every
+	 * frame emits the same glyphs at the same columns — only colours change — so it can never break the
+	 * freeze/jitter invariant, and it is fully deterministic (no RNG).
+	 */
+	private summonBannerBootFrames(): string[] | undefined {
+		if (this.resolvedLayout.bannerAnimation !== "boot") return undefined;
+		const banner = this.resolvedBanner;
+		const ramp = this.resolvedGradient;
+		if (!banner || !ramp || ramp.length === 0) return undefined;
+		const rows = banner.lines.map((l) => [...l]);
+		const H = rows.length;
+		if (H === 0) return undefined;
+		const W = Math.max(1, ...rows.map((r) => r.length));
+		if (W <= 1) return undefined;
+
+		// The boot strip is the last line; find its ‹ … › segments by column range.
+		const last = H - 1;
+		const segs: Array<{ start: number; end: number }> = [];
+		let open = -1;
+		for (let c = 0; c < rows[last].length; c++) {
+			const ch = rows[last][c];
+			if (ch === "‹") open = c;
+			else if (ch === "›" && open >= 0) {
+				segs.push({ start: open, end: c });
+				open = -1;
+			}
+		}
+
+		const dimHex = "#0a0b14";
+		const colAt = (c: number) => this.gradientAt(W <= 1 ? 0 : c / (W - 1), ramp, true);
+		const perSeg = 6; // frames to light each segment in turn
+		const hold = 28; // held "all lit" frames before the loop re-ignites
+		const frameCount = Math.max(1, segs.length) * perSeg + hold;
+		const frames: string[] = [];
+		for (let f = 0; f < frameCount; f++) {
+			const out: string[] = [];
+			for (let r = 0; r < H; r++) {
+				let line = "";
+				for (let c = 0; c < W; c++) {
+					const ch = rows[r][c] ?? " ";
+					if (ch === " ") {
+						line += " ";
+						continue;
+					}
+					const base = colAt(c);
+					let col = base;
+					if (r === last) {
+						// only the ‹…› segments ramp in; the ╺━ rails stay lit throughout.
+						const segIdx = segs.findIndex((s) => c >= s.start && c <= s.end);
+						if (segIdx >= 0 && f < (segIdx + 1) * perSeg) col = this.mixHex(dimHex, base, 0.18);
+					}
+					line += this.colorizeHex(col, ch);
 				}
 				out.push(line);
 			}
@@ -1198,7 +1277,7 @@ function getBuiltinThemes(): Record<string, ThemeJson> {
 			light: JSON.parse(fs.readFileSync(path.join(themesDir, "light.json"), "utf-8")) as ThemeJson,
 		};
 		// Phase 1: load new built-in themes when present (bundled with the package)
-		for (const name of ["editorial", "brutalist", "summon", "harness"]) {
+		for (const name of ["editorial", "brutalist", "summon", "harness", "command-bridge"]) {
 			const p = path.join(themesDir, `${name}.json`);
 			if (fs.existsSync(p)) {
 				BUILTIN_THEMES[name] = JSON.parse(fs.readFileSync(p, "utf-8")) as ThemeJson;
@@ -2050,6 +2129,8 @@ export function getEditorTheme(): EditorTheme {
 	return {
 		borderColor: (text: string) => theme.fg("borderMuted", text),
 		selectList: getSelectListTheme(),
+		// command-bridge: render the editor's top rule as a "[ CMD » ]" prompt cell (inputAreaStyle:"cmd-cell").
+		promptLabel: () => (theme.inputAreaStyle() === "cmd-cell" ? theme.fg("accent", "[ CMD » ]") : undefined),
 	};
 }
 

@@ -279,3 +279,54 @@ test("renderWidget: streak paints only while agents run (not once settled)", () 
 	]);
 	assert.ok(!renderWidget(settled, 72, 0)[0].includes("\u203a"), "settled run quiesces the streak");
 });
+
+// \u2500\u2500 pluggable layout switch + command-bridge (#layout) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+
+test("renderWidget default style is 'panel' and byte-identical to explicit panel", () => {
+	const vm = feed([{ t: "spawned", id: "a", agent: "scout", model: "fast", load_pct: 63, window_pct: 0, ts: 1 }]);
+	assert.deepEqual(renderWidget(vm, 72, 0), renderWidget(vm, 72, 0, "panel"));
+});
+
+test("renderWidget command-bridge: renders the ops console cells, different from panel", () => {
+	const vm = feed([
+		{ t: "spawned", id: "a", agent: "scout", model: "fast", load_pct: 63, window_pct: 0, ts: 1 },
+		{ t: "autoscale", id: "fleet", ticks: [{ bundle: "scout", current: 1, target: 0, action: "shrink" }] },
+	]);
+	const joined = renderWidget(vm, 72, 0, "command-bridge").map(stripAnsi).join("\n");
+	assert.ok(joined.includes("[SUMMON]"), "SUMMON cell");
+	assert.ok(joined.includes("[GOV]"), "governor cell");
+	assert.ok(joined.includes("[AGENTS]"), "agents register");
+	assert.ok(joined.includes("[FLEET HUD]"), "pinned fleet HUD when autoscaling");
+	assert.ok(joined.includes("scout"), "shows the contact");
+	assert.notEqual(
+		joined,
+		renderWidget(vm, 72, 0, "panel").map(stripAnsi).join("\n"),
+		"command-bridge is a distinct layout",
+	);
+});
+
+test("renderWidget command-bridge: every framed row is exactly W columns (clean rectangle)", () => {
+	const vm = feed([
+		{ t: "spawned", id: "a", agent: "scout", model: "fast", load_pct: 63, window_pct: 0, ts: 1 },
+		{ t: "done", id: "a", status: "done", ts: 2 },
+		{ t: "spawned", id: "b", agent: "builder", model: "standard", ts: 3 },
+		{ t: "autoscale", id: "fleet", ticks: [{ bundle: "scout", current: 1, target: 0, action: "shrink" }] },
+	]);
+	const framed = renderWidget(vm, 72, 0, "command-bridge")
+		.map(stripAnsi)
+		.filter((l) => /^[\u250c\u2502\u251c\u255e\u2514]/.test(l));
+	const widths = new Set(framed.map((l) => [...l].length));
+	assert.equal(widths.size, 1, `all framed rows must share one width; got ${[...widths].join(",")}`);
+	assert.equal([...widths][0], 72, "rows fill the full width W");
+});
+
+test("renderWidget command-bridge: jitter-safe \u2014 isAnimating unchanged + byte-stable per (vm,frame)", () => {
+	const vm = feed([{ t: "spawned", id: "a", agent: "scout", model: "fast", ts: 1 }]);
+	assert.equal(isAnimating(vm), true, "a running agent still animates under command-bridge");
+	assert.deepEqual(renderWidget(vm, 72, 2, "command-bridge"), renderWidget(vm, 72, 2, "command-bridge"));
+	const idle = feed([
+		{ t: "spawned", id: "a", agent: "scout", model: "fast", ts: 1 },
+		{ t: "done", id: "a", status: "done", ts: 2 },
+	]);
+	assert.equal(isAnimating(idle), false, "command-bridge does not keep a settled run animating");
+});

@@ -251,6 +251,37 @@ describe("Theme summon comet banner", () => {
 	});
 });
 
+describe("Theme command-bridge boot banner", () => {
+	const BOOT_BANNER = { lines: ["##  ##", "##  ##", "╺━ ‹ a › ‹ b › ‹ c › ━╸"], tagline: "boot" };
+	const BOOT = { gradient: GRADIENT, banner: BOOT_BANNER, layout: { bannerAnimation: "boot" } };
+
+	test("opt-in → frames; constant width every row/frame; truecolor; deterministic", () => {
+		const frames = loadAugmented(BOOT).summonBannerCometFrames()!;
+		expect(frames).toBeDefined();
+		expect(frames.length).toBeGreaterThan(1);
+		const widths = new Set(frames.flatMap((f) => f.split("\n").map((l) => visibleWidth(l))));
+		expect(widths.size).toBe(1); // no jitter
+		for (const f of frames) expect(f).toContain("38;2;"); // truecolor-painted
+		expect(loadAugmented(BOOT).summonBannerCometFrames()).toEqual(loadAugmented(BOOT).summonBannerCometFrames());
+	});
+
+	test("ramps then holds: frame 0 differs from the lit end, and the tail is held", () => {
+		const frames = loadAugmented(BOOT).summonBannerCometFrames()!;
+		expect(frames[0]).not.toEqual(frames[frames.length - 1]); // ‹…› segments light over the loop
+		expect(frames[frames.length - 1]).toEqual(frames[frames.length - 2]); // held at the end
+	});
+
+	test("off by default / missing gradient / missing banner → undefined", () => {
+		expect(loadAugmented({ gradient: GRADIENT, banner: BOOT_BANNER }).summonBannerCometFrames()).toBeUndefined();
+		expect(
+			loadAugmented({ banner: BOOT_BANNER, layout: { bannerAnimation: "boot" } }).summonBannerCometFrames(),
+		).toBeUndefined();
+		expect(
+			loadAugmented({ gradient: GRADIENT, layout: { bannerAnimation: "boot" } }).summonBannerCometFrames(),
+		).toBeUndefined();
+	});
+});
+
 describe("Backwards compatibility (no gradient/banner declared)", () => {
 	test("builtin-style theme returns undefined for all premium features", () => {
 		const theme = loadAugmented({}); // dark + nothing extra

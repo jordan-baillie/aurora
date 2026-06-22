@@ -2,7 +2,16 @@
 // multi-agent dashboard above the editor (TUI mode only). Pure logic is in src/observe.ts.
 // Phase 5 adds /harness-web command to serve a live HTTP/SSE dashboard.
 import type { ExtensionAPI } from "../../../index.ts";
-import { emptyVM, isAnimating, reduce, renderFooter, renderWidget, setExpanded } from "../src/observe.ts";
+import {
+	DASHBOARD_STYLES,
+	type DashboardStyle,
+	emptyVM,
+	isAnimating,
+	reduce,
+	renderFooter,
+	renderWidget,
+	setExpanded,
+} from "../src/observe.ts";
 import { createWebSurface, getWebToken, type WebSurface } from "../src/web-surface.ts";
 
 export default function observe(summon: ExtensionAPI) {
@@ -12,6 +21,10 @@ export default function observe(summon: ExtensionAPI) {
 	let frame = 0;
 	let anim: any;
 	let surface: WebSurface | undefined;
+	// Pluggable dashboard layout (#layout): HARNESS_DASHBOARD picks the initial mode; /harness-layout switches live.
+	let dashStyle: DashboardStyle = (DASHBOARD_STYLES as string[]).includes(process.env.HARNESS_DASHBOARD ?? "")
+		? (process.env.HARNESS_DASHBOARD as DashboardStyle)
+		: "panel";
 
 	// animation loop: advance the frame so running agents spin + the splash wordmark shimmers (~120ms).
 	// CRITICAL: this MUST go fully quiet when idle. An always-on "idle shimmer" repaints the bottom
@@ -113,6 +126,25 @@ export default function observe(summon: ExtensionAPI) {
 		},
 	});
 
+	// Pluggable dashboard layout switch (#layout): flip the live widget between render modes at runtime.
+	summon.registerCommand?.("harness-layout", {
+		description: `Switch the live dashboard layout. Args: ${DASHBOARD_STYLES.join(" | ")} | show.`,
+		handler: async (args: string, ctx: any) => {
+			const a = (args ?? "").trim();
+			if (!a || a === "show") {
+				ctx?.ui?.notify?.(`harness layout: ${dashStyle}  (options: ${DASHBOARD_STYLES.join(", ")})`, "info");
+				return;
+			}
+			if ((DASHBOARD_STYLES as string[]).includes(a)) {
+				dashStyle = a as DashboardStyle;
+				tuiRef?.requestRender?.();
+				ctx?.ui?.notify?.(`harness layout → ${dashStyle}`, "info");
+			} else {
+				ctx?.ui?.notify?.(`unknown layout '${a}'. options: ${DASHBOARD_STYLES.join(", ")}`, "warning");
+			}
+		},
+	});
+
 	summon.on("session_start", async (_e: any, ctx: any) => {
 		// TUI-only surface. Newer pi (≥0.79) reports ctx.mode ("tui"|"rpc"|"json"|"print"); the older
 		// dev binary (pi-mono@tui-refresh-editorial, 0.75.5) has NO ctx.mode and only ever runs this in its
@@ -125,7 +157,7 @@ export default function observe(summon: ExtensionAPI) {
 			"harness",
 			(tui: any, _theme: any) => {
 				tuiRef = tui;
-				return { invalidate() {}, render: (width: number) => renderWidget(vm, width, frame) };
+				return { invalidate() {}, render: (width: number) => renderWidget(vm, width, frame, dashStyle) };
 			},
 			{ placement: "aboveEditor" },
 		);

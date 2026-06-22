@@ -113,6 +113,23 @@ export class FooterComponent implements Component {
 		const usingSubscription = state.model ? this.session.modelRegistry.isUsingOAuth(state.model) : false;
 
 		// ── Branch on footerStyle ────────────────────────────────────────────
+		if (theme.footerStyle() === "hud-strip") {
+			return this.renderHudStrip(
+				width,
+				state.model?.id ?? "no-model",
+				!!(state.model as any)?.reasoning,
+				(state as any).thinkingLevel as string | undefined,
+				totalInput,
+				totalOutput,
+				totalCost,
+				contextWindow,
+				contextPercentValue,
+				contextPercent,
+				usingSubscription,
+				pwd,
+				extensionStatuses,
+			);
+		}
 		if (theme.footerStyle() === "single-line") {
 			return this.renderSingleLine(
 				width,
@@ -320,6 +337,80 @@ export class FooterComponent implements Component {
 			lines.push(truncateToWidth(statusLine, width, theme.fg("dim", "...")));
 		}
 
+		return lines;
+	}
+
+	// ──────────────────────────────────────────────────────────────────────────
+	// HUD-strip footer (command-bridge): bracketed [ … ] telemetry cells.
+	// ──────────────────────────────────────────────────────────────────────────
+	private renderHudStrip(
+		width: number,
+		modelId: string,
+		hasReasoning: boolean,
+		thinkingLevel: string | undefined,
+		totalInput: number,
+		totalOutput: number,
+		totalCost: number,
+		contextWindow: number,
+		contextPercentValue: number,
+		contextPercent: string,
+		usingSubscription: boolean,
+		pwd: string,
+		extensionStatuses: ReadonlyMap<string, string>,
+	): string[] {
+		const autoIndicator = this.autoCompactEnabled ? " auto" : "";
+		const cell = (s: string): string => `${theme.fg("accent", "[")} ${s} ${theme.fg("accent", "]")}`;
+
+		let model = modelId;
+		if (hasReasoning) {
+			const level = thinkingLevel || "off";
+			model = level === "off" ? `${modelId} think:off` : `${modelId} think:${level}`;
+		}
+		const ctxStr =
+			contextPercent === "?"
+				? `CTX ?/${formatTokens(contextWindow)}`
+				: `CTX ${contextPercent}%/${formatTokens(contextWindow)}${autoIndicator}`;
+		const ctxCol = contextPercentValue > 90 ? "error" : contextPercentValue > 70 ? "warning" : "muted";
+
+		const modelCell = cell(theme.fg("text", model));
+		const ctxCell = cell(theme.fg(ctxCol, ctxStr));
+		const tokCell =
+			totalInput || totalOutput
+				? cell(theme.fg("muted", `↑${formatTokens(totalInput)} ↓${formatTokens(totalOutput)}`))
+				: null;
+		const costCell =
+			totalCost || usingSubscription
+				? cell(theme.fg("muted", `$${totalCost.toFixed(3)}${usingSubscription ? " sub" : ""}`))
+				: null;
+		const cwdCell = pwd ? cell(theme.fg("muted", pwd)) : null;
+
+		const join = (cells: Array<string | null>): string => cells.filter((c): c is string => c !== null).join(" ");
+		// Fit into width — drop order: cost, tokens, cwd (mirrors single-line).
+		const candidates: Array<Array<string | null>> = [
+			[modelCell, ctxCell, tokCell, costCell, cwdCell],
+			[modelCell, ctxCell, tokCell, null, cwdCell],
+			[modelCell, ctxCell, null, null, cwdCell],
+			[modelCell, ctxCell, null, null, null],
+		];
+		let result = join(candidates[0]);
+		for (const candidate of candidates) {
+			const joined = join(candidate);
+			if (visibleWidth(joined) <= width) {
+				result = joined;
+				break;
+			}
+		}
+		if (visibleWidth(result) > width) {
+			result = truncateToWidth(result, width, theme.fg("dim", "…"));
+		}
+
+		const lines: string[] = [result];
+		if (extensionStatuses.size > 0) {
+			const sortedStatuses = Array.from(extensionStatuses.entries())
+				.sort(([a], [b]) => a.localeCompare(b))
+				.map(([, text]) => sanitizeStatusText(text));
+			lines.push(truncateToWidth(sortedStatuses.join(" "), width, theme.fg("dim", "...")));
+		}
 		return lines;
 	}
 }

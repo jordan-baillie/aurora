@@ -200,6 +200,9 @@ interface LayoutLine {
 export interface EditorTheme {
 	borderColor: (str: string) => string;
 	selectList: SelectListTheme;
+	// Optional: a pre-coloured prompt label rendered into the top border as a labelled rule
+	// (e.g. command-bridge "── [ CMD » ] ──────"). Undefined → a plain horizontal rule (default).
+	promptLabel?: () => string | undefined;
 }
 
 export interface EditorOptions {
@@ -459,7 +462,15 @@ export class Editor implements Component, Focusable {
 				result.push(this.borderColor(truncateToWidth(indicator, width)));
 			}
 		} else {
-			result.push(horizontal.repeat(width));
+			const label = this.theme.promptLabel?.();
+			const lead = "── ";
+			if (label && width >= visibleWidth(lead) + visibleWidth(label) + 1) {
+				// Labelled top rule (e.g. command-bridge "── [ CMD » ] ──────"); label is pre-coloured.
+				const fill = Math.max(0, width - visibleWidth(lead) - visibleWidth(label) - 1);
+				result.push(this.borderColor(lead) + label + this.borderColor(` ${"─".repeat(fill)}`));
+			} else {
+				result.push(horizontal.repeat(width));
+			}
 		}
 
 		// Render each visible layout line

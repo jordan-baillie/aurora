@@ -3831,4 +3831,20 @@ describe("Editor component", () => {
 			assert.strictEqual(submitted, pastedText);
 		});
 	});
+
+	describe("prompt-cell top border (promptLabel)", () => {
+		it("renders a labelled top rule when promptLabel returns a label, width-exact", () => {
+			const labelled = { ...defaultEditorTheme, promptLabel: () => "[ CMD » ]" };
+			const top = stripVTControlCharacters(new Editor(createTestTUI(), labelled).render(40)[0]);
+			assert.ok(top.includes("[ CMD » ]"), "top border shows the prompt label");
+			assert.strictEqual(visibleWidth(top), 40, "labelled rule fills width exactly");
+		});
+
+		it("default theme (no promptLabel) keeps a plain horizontal rule", () => {
+			const line0 = new Editor(createTestTUI(), defaultEditorTheme).render(40)[0];
+			const top = stripVTControlCharacters(line0);
+			assert.ok(!top.includes("["), "plain rule, no label");
+			assert.strictEqual(visibleWidth(line0), 40);
+		});
+	});
 });

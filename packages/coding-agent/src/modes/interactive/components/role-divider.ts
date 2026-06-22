@@ -39,6 +39,15 @@ export function buildRoleHeader(role: "user" | "assistant", width: number): stri
 		return theme.fg("muted", open + hr.repeat(hrCount));
 	}
 
+	if (style === "hud") {
+		// command-bridge: an accent [ LABEL ] cell followed by a heavy console rule (boxH glyph).
+		const label = theme.roleLabel(role).toUpperCase();
+		const open = `[ ${label} ] `;
+		const rule = theme.glyph("boxH") || theme.glyph("hr") || "─";
+		const ruleCount = Math.max(0, width - open.length);
+		return theme.fg("accent", open) + theme.fg("borderMuted", rule.repeat(ruleCount));
+	}
+
 	return "";
 }
 

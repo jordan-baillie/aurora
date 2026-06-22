@@ -129,10 +129,12 @@ class IndentedToolFrame implements Component {
 class AsciiBoxFrame implements Component {
 	private innerContainer: Container;
 	private getState: () => IndentFrameState;
+	private keyed: boolean;
 
-	constructor(innerContainer: Container, getState: () => IndentFrameState) {
+	constructor(innerContainer: Container, getState: () => IndentFrameState, keyed = false) {
 		this.innerContainer = innerContainer;
 		this.getState = getState;
+		this.keyed = keyed;
 	}
 
 	invalidate(): void {
@@ -156,13 +158,27 @@ class AsciiBoxFrame implements Component {
 		const edge = (s: string) => theme.fg("border", s);
 
 		// ── Top border ─────────────────────────────────────────────────────
-		// tl h h bo  <tool>  bc h…h tr
-		const topLabel = `${bo} ${state.toolName} ${bc}`; // visible label segment
-		const topFill = Math.max(0, width - 1 /*tl*/ - 2 /*hh*/ - topLabel.length - 1 /*tr*/);
-		const topBorder =
-			edge(`${tl}${h}${h}${bo} `) +
-			theme.fg("toolTitle", theme.bold(state.toolName)) +
-			edge(` ${bc}${h.repeat(topFill)}${tr}`);
+		let topBorder: string;
+		if (this.keyed) {
+			// command-bridge: an accent [ TOOL ] cell + the tool name, then a heavy console rule.
+			const head = `${tl}${h} `;
+			const cellLabel = "[ TOOL ]";
+			const namePart = ` ${state.toolName} `;
+			const topFill = Math.max(0, width - head.length - cellLabel.length - namePart.length - 1);
+			topBorder =
+				edge(head) +
+				theme.fg("toolTitle", theme.bold(cellLabel)) +
+				theme.fg("text", namePart) +
+				edge(`${h.repeat(topFill)}${tr}`);
+		} else {
+			// tl h h bo  <tool>  bc h…h tr
+			const topLabel = `${bo} ${state.toolName} ${bc}`; // visible label segment
+			const topFill = Math.max(0, width - 1 /*tl*/ - 2 /*hh*/ - topLabel.length - 1 /*tr*/);
+			topBorder =
+				edge(`${tl}${h}${h}${bo} `) +
+				theme.fg("toolTitle", theme.bold(state.toolName)) +
+				edge(` ${bc}${h.repeat(topFill)}${tr}`);
+		}
 
 		// ── Body ───────────────────────────────────────────────────────────
 		const bodyWidth = boxBodyWidth(width); // "v " + " v"
@@ -170,7 +186,22 @@ class AsciiBoxFrame implements Component {
 
 		// ── Bottom border ──────────────────────────────────────────────────
 		let bottomBorder: string;
-		if (!state.isPartial && state.hasResult) {
+		if (this.keyed) {
+			// command-bridge: a right-aligned RUN / DONE / FAIL state cell + elapsed.
+			const done = !state.isPartial && state.hasResult;
+			const word = done ? (state.isError ? "FAIL" : "DONE") : "RUN";
+			const wcol: "error" | "success" | "accent" = done ? (state.isError ? "error" : "success") : "accent";
+			const elapsed = frameElapsed(state);
+			const tail = ` ${word}  ${elapsed} `; // visible width accounting
+			const lead = `${bl}${h} `;
+			const botFill = Math.max(0, width - lead.length - tail.length - 1 /*br*/);
+			bottomBorder =
+				edge(lead) +
+				edge(h.repeat(botFill)) +
+				theme.fg(wcol, ` ${word}`) +
+				theme.fg("muted", `  ${elapsed} `) +
+				edge(br);
+		} else if (!state.isPartial && state.hasResult) {
 			const elapsed = frameElapsed(state);
 			const pill = state.isError ? theme.glyph("errorPill") : theme.glyph("successPill");
 			const pillColor: "error" | "success" = state.isError ? "error" : "success";
@@ -284,8 +315,8 @@ export class ToolExecutionComponent extends Container {
 
 		const style = this.toolBlockStyleAtConstruct;
 
-		if (style === "indent" || style === "ascii-box") {
-			// ── Indented / ascii-box framing ──────────────────────────────
+		if (style === "indent" || style === "ascii-box" || style === "keyed") {
+			// ── Indented / ascii-box / keyed framing ──────────────────────
 			const getState = (): IndentFrameState => ({
 				toolName: this.toolName,
 				isPartial: this.isPartial,
@@ -295,8 +326,8 @@ export class ToolExecutionComponent extends Container {
 				hasResult: this.result !== undefined,
 			});
 
-			if (style === "ascii-box") {
-				this.indentFrame = new AsciiBoxFrame(this.indentContainer, getState);
+			if (style === "ascii-box" || style === "keyed") {
+				this.indentFrame = new AsciiBoxFrame(this.indentContainer, getState, style === "keyed");
 			} else {
 				this.indentFrame = new IndentedToolFrame(this.indentContainer, getState);
 			}
@@ -367,7 +398,9 @@ export class ToolExecutionComponent extends Container {
 			// Framed styles render elapsed in their footer/border → tools must not also
 			// print their own duration line (single owner of timing per render mode).
 			frameShowsTiming:
-				this.toolBlockStyleAtConstruct === "indent" || this.toolBlockStyleAtConstruct === "ascii-box",
+				this.toolBlockStyleAtConstruct === "indent" ||
+				this.toolBlockStyleAtConstruct === "ascii-box" ||
+				this.toolBlockStyleAtConstruct === "keyed",
 		};
 	}
 
@@ -476,8 +509,8 @@ export class ToolExecutionComponent extends Container {
 	private updateDisplay(): void {
 		const style = this.toolBlockStyleAtConstruct;
 
-		// ── Indent / ascii-box mode ─────────────────────────────────────────
-		if (style === "indent" || style === "ascii-box") {
+		// ── Indent / ascii-box / keyed mode ─────────────────────────────────
+		if (style === "indent" || style === "ascii-box" || style === "keyed") {
 			this.hideComponent = false;
 			this.indentContainer.clear();
 
