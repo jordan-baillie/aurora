@@ -9,7 +9,7 @@
 // Run: node --experimental-strip-types --test test/spawn-e2e.test.ts
 
 import assert from "node:assert/strict";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { after, before, test } from "node:test";
@@ -68,8 +68,9 @@ before(async () => {
 	projectDir = mkdtempSync(join(tmpdir(), "e2e-proj-"));
 	writeFileSync(join(projectDir, ".harness.json"), "{}"); // make projectDir the resolved root
 
-	// the fixture is spawned directly via its shebang → needs the exec bit.
-	chmodSync(FAKE_CLI, 0o755);
+	// SUMMON_BIN points at the .mjs fixture; agentSpawnCommand() routes script-file overrides through
+	// the Node runtime (process.execPath + fixture) so the launch is identical on Windows and POSIX —
+	// no shebang/exec-bit dependency (Node can't spawn() a .mjs directly on Windows → EFTYPE).
 
 	// test registry: a read-only worker, a reviewer (quorum judge fallback), a standard-tier shedder.
 	writeAgent("tester", "fast", ["read", "grep"], ["## result"]);

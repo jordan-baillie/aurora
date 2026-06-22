@@ -578,14 +578,18 @@ test("finalizeResult: code null → timeout; code 1 → failed", () => {
 	assert.equal(finalizeResult(frBundle, "", 1, {}, Date.now(), "m").status, "failed");
 });
 
-test("finalizeResult: code 0 + complete text + verify=true → verify.passed true, status done", () => {
-	const r = finalizeResult(frBundle, completeText, 0, { verify: "true" }, Date.now(), "m");
+// Verify commands here must exit identically under `bash -c` AND `cmd /c` so the suite passes on a
+// stock Windows box without Git Bash on PATH (runVerifyShell falls back to cmd.exe when bash is
+// ENOENT). The POSIX builtins `true`/`false` are NOT cmd.exe commands, so we use portable forms:
+// `cd .` exits 0 everywhere, `exit 1` exits non-zero everywhere.
+test("finalizeResult: code 0 + complete text + verify succeeds → verify.passed true, status done", () => {
+	const r = finalizeResult(frBundle, completeText, 0, { verify: "cd ." }, Date.now(), "m");
 	assert.equal(r.status, "done");
 	assert.equal(r.verify?.passed, true);
 });
 
-test("finalizeResult: code 0 + complete text + verify=false → verify.passed false, status verify_failed", () => {
-	const r = finalizeResult(frBundle, completeText, 0, { verify: "false" }, Date.now(), "m");
+test("finalizeResult: code 0 + complete text + verify fails → verify.passed false, status verify_failed", () => {
+	const r = finalizeResult(frBundle, completeText, 0, { verify: "exit 1" }, Date.now(), "m");
 	assert.equal(r.status, "verify_failed");
 	assert.equal(r.verify?.passed, false);
 });

@@ -43,9 +43,17 @@ export const AGENT_BIN = process.env.SUMMON_BIN ?? null;
 
 // Cross-platform self-spawn command for a sub-agent. The default routes through the running Node binary
 // (`process.execPath`, a real executable — no .cmd shim resolution needed) + the resolved CLI entry, so
-// it works identically on Windows and POSIX. An explicit SUMMON_BIN override is spawned as-is.
+// it works identically on Windows and POSIX. A SUMMON_BIN override that points at a JS/TS *script*
+// (.ts/.mjs/.cjs/.js — e.g. the e2e fake-cli fixture) is routed through Node the same way, because Node
+// cannot `spawn()` a script file directly on Windows (it returns EFTYPE — only the runtime can exec it).
+// A real binary/command on PATH is spawned as-is.
 export function agentSpawnCommand(): { cmd: string; prefix: string[] } {
-	if (AGENT_BIN) return { cmd: AGENT_BIN, prefix: [] };
+	if (AGENT_BIN) {
+		const script = AGENT_BIN.match(/\.(mjs|cjs|js|ts)$/i);
+		if (!script) return { cmd: AGENT_BIN, prefix: [] };
+		const prefix = script[1].toLowerCase() === "ts" ? ["--experimental-strip-types", AGENT_BIN] : [AGENT_BIN];
+		return { cmd: process.execPath, prefix };
+	}
 	const prefix = CLI_ENTRY.endsWith(".ts") ? ["--experimental-strip-types", CLI_ENTRY] : [CLI_ENTRY];
 	return { cmd: process.execPath, prefix };
 }
