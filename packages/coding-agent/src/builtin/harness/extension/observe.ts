@@ -3,6 +3,7 @@
 // Phase 5 adds /harness-web command to serve a live HTTP/SSE dashboard.
 import type { ExtensionAPI } from "../../../index.ts";
 import {
+	clearVM,
 	DASHBOARD_STYLES,
 	type DashboardStyle,
 	emptyVM,
@@ -86,6 +87,17 @@ export default function observe(summon: ExtensionAPI) {
 		forward(e); // feed the persistent service if running
 		startAnim(); // resume the spinner/shimmer while agents are active (self-stops when idle again)
 		if (!timer) timer = setTimeout(flush, 120); // throttle: never render per-event
+	});
+
+	// A finished fan-out's panel must NOT hang around into the next user turn. agent_start fires once at
+	// the start of each top-level run (one per user prompt) and NEVER mid-fan-out (sub-agents are separate
+	// processes, so they don't emit agent_start on this bus). So clear the dashboard here: the previous
+	// turn's settled ✓/✗ rows + verdict are wiped and the panel collapses, leaving a clean prompt. The
+	// within-turn summary is untouched — it stays visible right up to the moment the user moves on.
+	summon.on("agent_start", async () => {
+		clearVM(vm);
+		stopAnim(); // nothing left to animate; the next agent-event restarts it
+		tuiRef?.requestRender?.(); // repaint immediately so the stale panel disappears at once
 	});
 
 	// Phase 5 — /harness-web command: start/stop the HTTP+SSE dashboard.

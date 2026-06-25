@@ -3,6 +3,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+	clearVM,
 	counts,
 	emptyVM,
 	isAnimating,
@@ -218,6 +219,32 @@ test("renderWidget: byte-stable for identical (vm, frame)", () => {
 		{ t: "autoscale", id: "fleet", ticks: [{ bundle: "scout", current: 1, target: 2, action: "grow" }] },
 	]);
 	assert.deepEqual(renderWidget(vm, 72, 3), renderWidget(vm, 72, 3));
+});
+
+test("clearVM: a finished fan-out is wiped at the next turn so the panel does not hang around", () => {
+	// A settled fan-out (the bug: this panel persisted across turns until session end).
+	const vm = feed([
+		{ t: "spawned", id: "a", agent: "builder", model: "sonnet", ts: 1 },
+		{ t: "done", id: "a", status: "done", ts: 5 },
+		{ t: "autoscale", id: "fleet", ticks: [{ bundle: "builder", current: 1, target: 2, action: "grow" }] },
+		{ t: "shedding", id: "a", from: "frontier", to: "standard", window_pct: 90 },
+	]);
+	setExpanded(vm, "a");
+	assert.ok(renderWidget(vm).length > 0, "settled fan-out still renders within its own turn");
+
+	// Next user turn (agent_start -> clearVM): every row + transient gauge is dropped, so the widget
+	// collapses to nothing and the next turn starts on a clean prompt.
+	clearVM(vm);
+	assert.equal(vm.agents.size, 0, "agent rows wiped");
+	assert.equal(vm.expanded, undefined, "drill-in cleared");
+	assert.equal(vm.autoscale, undefined, "fleet gauge cleared");
+	assert.equal(vm.shed, undefined, "shed indicator cleared");
+	assert.equal(vm.governor, undefined, "governor gauge cleared");
+	assert.deepEqual(renderWidget(vm), [], "panel disappears after clear (no hang-around)");
+	assert.equal(isAnimating(vm), false, "cleared vm is idle");
+
+	clearVM(vm); // idempotent: clearing an already-idle vm is a harmless no-op
+	assert.deepEqual(renderWidget(vm), []);
 });
 
 // ── load-shedding visibility (A1) ───────────────────────────────────────────────

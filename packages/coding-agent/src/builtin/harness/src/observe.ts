@@ -56,6 +56,24 @@ export interface ViewModel {
 
 export const emptyVM = (): ViewModel => ({ agents: new Map(), startedAt: Date.now() });
 
+// Reset the dashboard to its idle state IN-PLACE for a new user turn: drop every agent row and all
+// transient fleet/quorum gauges so a finished fan-out's panel does NOT bleed into the next turn (it
+// otherwise persists — showing settled ✓/✗ rows + the last verdict — until session end, which reads as a
+// stale panel "hanging around"). Mutates in place so the extension's render closure keeps the SAME
+// ViewModel reference. startedAt is refreshed so the elapsed clock measures the new turn. Idempotent:
+// a no-op when already idle (so clearing at every turn start costs nothing).
+export function clearVM(vm: ViewModel): void {
+	vm.agents.clear();
+	vm.startedAt = Date.now();
+	vm.expanded = undefined;
+	vm.governor = undefined;
+	vm.govHist = undefined;
+	vm.autoscale = undefined;
+	vm.shed = undefined;
+	vm.burst = undefined;
+	vm.quorum = undefined;
+}
+
 // Defensively fold governor signals off any event that carries them (carry-forward so a missing field
 // never zeroes a gauge). Adds NO running agent, so isAnimating is unaffected (jitter invariant).
 function captureGov(vm: ViewModel, e: any): void {
@@ -470,6 +488,8 @@ function drillIn(vm: ViewModel): string[] {
 export function renderWidget(vm: ViewModel, width: number = 72, frame = 0, style: DashboardStyle = "panel"): string[] {
 	const c = counts(vm);
 	// Idle (nothing delegated): render NOTHING so the widget takes zero space and the prompt stays clean.
+	// (A finished fan-out's panel is cleared at the next user turn via clearVM(), so it never persists
+	// across turns; within a turn the settled ✓/✗ + verdict summary stay visible until the turn ends.)
 	if (c.total === 0 && vm.expanded === undefined) return [];
 	const W = Math.max(46, Math.min(typeof width === "number" && width > 0 ? width : 72, 120));
 	if (style === "command-bridge") {
