@@ -73,8 +73,24 @@ committed, so `npm run build` needs no network. Maintainers refresh it with `npm
   - `run_blueprint({ blueprint, vars })` — a **code-defined DAG**: deterministic shell *code nodes*
     interleaved with scoped *agent nodes*, run with continuous wide parallelism and fail-closed
     dependent skipping (the LLM only runs inside the contained agent nodes).
+  - `orchestrate({ goal })` — the one-call **plan + run + verify** primitive: synthesises a DAG from a
+    goal and runs the agent work in parallel; deterministic shell steps pause for your approval.
   - a live multi-agent **TUI dashboard** (`/harness-drill`, `/harness-web`).
 - **The Summon look** — the `summon` theme is the default; switch anytime with `summon themes <name>`.
+
+## Orchestration mode
+
+The harness tools are always loaded, but a coding agent only fans out if something tells it *when* to.
+Summon injects a **delegate-by-default doctrine** — plus the live specialist roster and saved-recipe
+catalog — into the main session every turn, so substantial work is decomposed and fanned out instead of
+done alone. Three intensities, set with `SUMMON_ORCHESTRATION` or switched live with `/orchestrate`:
+
+- **`off`** — no doctrine; the plain agent (the pre-mode behaviour).
+- **`auto`** (default) — delegate substantial / parallelisable / open-ended work; stay solo for trivial edits.
+- **`ultra`** — standing opt-in: decompose + fan out + adversarially verify *every* substantial task; cost
+  is not the constraint.
+
+`/orchestrate` with no argument shows the current mode; `/orchestrate off|auto|ultra` switches it live.
 
 ## Specialists (built-in registry)
 
@@ -108,16 +124,20 @@ Teams live alongside in `…/harness/teams/` or `<project>/.summon/teams/`.
   the project root / into protected paths (separator-agnostic, correct on Windows and POSIX).
 - **Within-run result cache + dedup** — identical read-only sub-tasks collapse to one execution.
   Disable with `HARNESS_NO_CACHE=1`.
-- **builder→reviewer auto-pairing** — `spawn_agent({ review: true })` runs the reviewer over the git
-  diff and fails closed unless it APPROVEs.
+- **Multi-reviewer adversarial verification** — `spawn_agent({ review: true })` fans out to N independent
+  reviewers (odd default 3, 5 in `ultra`; override with `reviewers`, capped by `HARNESS_REVIEWERS_MAX`),
+  each on a distinct lens (correctness / regressions / tests); the build fails closed unless a strict
+  majority APPROVEs.
 - **Fleet observability** — a cross-run spawn ledger (cost-per-agent-hour, done/cache-hit rates,
   rendered to `~/.summon/harness/fleet-summary.md`) plus a boot prompt audit that flags skill-bloat.
 
 ## Configuration (all optional)
 `SUMMON_CODING_AGENT_DIR` (config home, default `~/.summon`), `SUMMON_MODEL` / `SUMMON_BIN`,
+`SUMMON_ORCHESTRATION` (`off`|`auto`|`ultra`, default `auto` — the delegate-by-default intensity),
 `HARNESS_AGENTS_DIR` / `HARNESS_TEAMS_DIR` / `HARNESS_BLUEPRINTS_DIR`, `HARNESS_POOL_SIZE`,
 `HARNESS_PREWARM` (comma-sep bundles to stand up hot at startup), `HARNESS_WINDOW_TOKENS` (>0 turns on
-a hard rolling-window gate). The harness model tiers default to Claude Opus / Sonnet / Haiku.
+a hard rolling-window gate), `HARNESS_REVIEWERS_MAX` (cap on multi-reviewer fan-out, default 7). The
+harness model tiers default to Claude Opus / Sonnet / Haiku.
 
 ## Layout
 ```

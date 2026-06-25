@@ -108,8 +108,12 @@ automatically.
 - **Tool-layer guard** (`extension/guard.ts`) — loaded into every write/exec-capable worker; blocks
   destructive bash and writes to protected paths or outside the project root (`escapesRoot` is
   sibling-prefix safe).
-- **builder→reviewer auto-pairing** — `spawn_agent({ review: true })` runs the reviewer over the git
-  diff and **fails closed** unless the reviewer APPROVEs.
+- **Multi-reviewer adversarial verification** — `spawn_agent({ review: true })` fans the review out to N
+  **independent** reviewers (`runWithReviewers`/`aggregateReviews`), each given a distinct lens
+  (`REVIEW_LENSES`: correctness / regressions & safety / tests & edge-cases) over the git diff. The build
+  **fails closed** unless a **strict majority** APPROVEs — odd default `reviewers` (3, or 5 in `ultra`)
+  so the majority is meaningful and one diverse-lens dissent can't sink a good change; bounded by
+  `HARNESS_REVIEWERS_MAX` (default 7).
 - **Shift-left write validation (#6)** — the worker-side guard runs an EXACT syntax check on the
   content a `write` is about to commit (`validateContent`: JSON via `JSON.parse`, Python via
   `py_compile` when available) and **blocks a syntactically broken write** with the parser error fed
@@ -145,16 +149,41 @@ automatically.
   ids, exactly-one-kind per node, known non-spawn agents, acyclic via Kahn). This is the “put the LLM
   in contained boxes” primitive: the harness owns the graph + the code nodes; the model runs only
   inside agent nodes. Global + project-local `.summon/blueprints/`; ships `scout-build-verify`.
+- **`orchestrate`** (`planAndRun`) — the one-call **plan + run + verify** primitive: the frontier planner
+  synthesises a validated DAG from a goal, then it RUNS — scoped **agent** nodes execute inline/in parallel,
+  while generated **code/shell** nodes are force-gated (`forceApprovalOnWrite`) so they **pause** for
+  `approve_gate`/`resume_run`. Always runs the safe parts (unlike `plan_and_run`, which previews unless
+  `HARNESS_PLAN_RUN=1`); `dry_run:true` previews. Durable + resumable; the orchestration doctrine routes
+  open-ended goals here.
 - **Containerised workers** (`src/container-worker.ts`) — a PooledWorker over a real docker container
   for isolation (lifecycle smoke-proven).
+
+### A.8b Orchestration mode (delegate-by-default)
+The spawn tools are auto-loaded and live on the **main** session, but nothing in the base prompt told the
+resident agent *when* to use them, so it did substantial work alone. The mode layer (`src/orchestration.ts`)
+closes that gap. `resolveOrchestrationMode` reads `SUMMON_ORCHESTRATION` → `off | auto | ultra` (default
+`auto`, fail-safe). While the mode is on, a `before_agent_start` handler appends a **doctrine** —
+`buildOrchestrationDoctrine` — to the live session's system prompt every turn: when to delegate, prefer
+**wide** fan-out over sequential self-work, verify with **multiple** independent reviewers, use deterministic
+`verify`, plus the live registry digest and the saved team/blueprint catalog (also injected into the
+`run_team`/`run_blueprint` tool descriptions so recipes are discoverable cold). Each turn rebuilds from the
+base prompt, so the doctrine can't accumulate; the handler is error-caught upstream, so a bad turn can never
+wedge the session. `auto` delegates substantial/parallelisable/open-ended work and stays solo for trivial
+edits; `ultra` is a standing opt-in to decompose + fan out + adversarially verify *every* substantial task.
+`/orchestrate [off|auto|ultra]` flips the intensity live (mirrors `/harness-scale`). The model also gets
+**back-pressure** it never had: spawn/fan-out results append a one-line governor hint (`formatGovernorHint`)
+when a hard token budget is configured and the rolling window is hot — silent (no-op) in the default
+no-budget config, so it never discourages the wide fan-out the doctrine asks for.
 
 ### A.9 Configuration (all optional, env-overridable)
 `HARNESS_HOME` (install root; else derived from `src/paths.ts` via `import.meta.url`),
 `HARNESS_AGENTS_DIR`, `HARNESS_TEAMS_DIR`, `HARNESS_BLUEPRINTS_DIR`, `HARNESS_THEMES_DIR`,
 `SUMMON_CODING_AGENT_DIR` (config home for the registry index, default
-`~/.summon`), `HARNESS_POOL_SIZE`, `HARNESS_PREWARM` (comma-sep bundle names to pre-warm),
-`HARNESS_WINDOW_TOKENS` (>0 = hard rolling-window gate), `HARNESS_NO_CACHE` (disable the within-run
-result cache), `HARNESS_WEB_TOKEN_FILE`. Model ids live in `MODEL` (`src/core.ts`).
+`~/.summon`), `SUMMON_ORCHESTRATION` (`off`|`auto`|`ultra`, default `auto` — delegate-by-default intensity),
+`HARNESS_POOL_SIZE`, `HARNESS_PREWARM` (comma-sep bundle names to pre-warm),
+`HARNESS_WINDOW_TOKENS` (>0 = hard rolling-window gate), `HARNESS_REVIEWERS_MAX` (multi-reviewer fan-out
+cap, default 7), `HARNESS_NO_CACHE` (disable the within-run result cache), `HARNESS_WEB_TOKEN_FILE`. Model
+ids live in `MODEL` (`src/core.ts`).
 
 ---
 

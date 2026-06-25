@@ -218,6 +218,37 @@ test("e2e plan_and_run (live): HARNESS_PLAN_RUN=1 executes the generated DAG", a
 	}
 });
 
+// ── orchestrate: the one-call plan+run primitive — RUNS by default (no HARNESS_PLAN_RUN needed) ──
+
+test("e2e orchestrate (default): runs the generated DAG even with HARNESS_PLAN_RUN unset", async () => {
+	delete process.env.HARNESS_PLAN_RUN; // orchestrate must NOT depend on the plan_and_run gate
+	const { api, tools, runShutdown } = makeSummon();
+	harness(api);
+	try {
+		const r = await tools.get("orchestrate").execute("id", { goal: "ship the thing" }, null, null, ctx);
+		assert.equal(r.isError, false, "orchestrate executes the generated DAG by default");
+		assert.match(r.content[0].text, /step1 \[agent:tester\] -> done/, "agent node ran inline");
+	} finally {
+		await runShutdown();
+	}
+});
+
+test("e2e orchestrate (dry_run): previews the validated DAG without executing", async () => {
+	delete process.env.HARNESS_PLAN_RUN;
+	const { api, tools, runShutdown } = makeSummon();
+	harness(api);
+	try {
+		const r = await tools
+			.get("orchestrate")
+			.execute("id", { goal: "ship the thing", dry_run: true }, null, null, ctx);
+		assert.equal(r.isError, false);
+		assert.match(r.content[0].text, /PLAN: auto-demo \(1 nodes, dry run\)/);
+		assert.equal(r.details.blueprint.nodes[0].agent, "tester");
+	} finally {
+		await runShutdown();
+	}
+});
+
 // ── A3: cross-process resume of a GENERATED (not-on-disk) blueprint ──────────────
 
 test("e2e resume_run: reconstructs a generated blueprint from run meta (A3) — not loadBlueprints", async () => {

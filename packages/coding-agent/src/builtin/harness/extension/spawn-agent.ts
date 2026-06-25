@@ -28,10 +28,12 @@ import {
 	estimateTokens,
 	isDestructiveCmd,
 	loadRegistries,
+	REVIEW_LENSES,
 	registryDigest,
 	retryPrompt,
 	runQuorum,
-	runWithReview,
+	runWithReviewers,
+	type SpawnResult,
 	spawnAgent,
 	WindowGovernor,
 	withRetry,
@@ -39,6 +41,14 @@ import {
 } from "../src/core.ts";
 import { aggregateFleet, appendFleetEntry, auditPrompt, fleetDigest, readFleet } from "../src/fleet.ts";
 import { type DemandLike, FleetController, type ShedDecision } from "../src/fleet-controller.ts";
+import {
+	buildOrchestrationDoctrine,
+	formatGovernorHint,
+	type OrchestrationMode,
+	orchestrationLabel,
+	resolveOrchestrationMode,
+	reviewersForMode,
+} from "../src/orchestration.ts";
 import { FLEET_LEDGER, FLEET_SUMMARY, REGISTRY_INDEX, RUNS_DIR } from "../src/paths.ts";
 import {
 	drainAllPools,
@@ -73,10 +83,39 @@ export default function harness(summon: ExtensionAPI) {
 		reserveGate: process.env.HARNESS_WINDOW_RESERVE === "1",
 	});
 	let activeScale = scaleMode; // runtime scale dial state (mutated by /harness-scale)
+	// Orchestration intensity (off/auto/ultra). Default 'auto': the resident main agent delegates
+	// substantial work but stays solo for trivial edits. Mutated live by /orchestrate; the doctrine is
+	// injected into the MAIN session's system prompt per turn by the before_agent_start handler below.
+	let activeMode: OrchestrationMode = resolveOrchestrationMode(process.env.SUMMON_ORCHESTRATION);
 	const names = [...registry.keys()].filter((n) => n !== "orchestrator").join(", ");
 	// AUTHORITATIVE registry awareness: a compact roster injected into every spawn tool description so the
 	// orchestrator always knows each specialist's tier/tools/contract (never depends on reading a file).
 	const digest = registryDigest(registry, { exclude: ["orchestrator"] });
+	// Saved-recipe catalogs (computed once at boot, like `digest`): make teams/blueprints DISCOVERABLE —
+	// injected into run_team/run_blueprint descriptions + the orchestration doctrine so the model can reach
+	// for a recipe by name instead of only learning the names from a failed-lookup error.
+	const recipeDigests = (): { teams: string; blueprints: string } => {
+		let teams = "(none loaded)";
+		let blueprints = "(none loaded)";
+		try {
+			const t = [...loadTeams(registry, process.cwd()).values()].map((x) =>
+				x.description ? `${x.name} — ${x.description}` : x.name,
+			);
+			if (t.length) teams = t.join(" · ");
+		} catch {
+			/* best-effort: a malformed recipe never wedges the extension */
+		}
+		try {
+			const b = [...loadBlueprints(registry, process.cwd()).values()].map((x) =>
+				x.description ? `${x.name} — ${x.description}` : x.name,
+			);
+			if (b.length) blueprints = b.join(" · ");
+		} catch {
+			/* best-effort */
+		}
+		return { teams, blueprints };
+	};
+	const { teams: teamsDigest, blueprints: blueprintsDigest } = recipeDigests();
 	// Within-run result cache + in-flight dedup (#5): identical READ-ONLY sub-tasks collapse to one
 	// execution. Disabled with HARNESS_NO_CACHE=1. Write-capable agents are never cached (safety in cache.ts).
 	const cache = process.env.HARNESS_NO_CACHE ? null : new ResultCache();
@@ -100,6 +139,9 @@ export default function harness(summon: ExtensionAPI) {
 	const RUN_REPORT = process.env.HARNESS_RUN_REPORT === "1";
 	// Best-of-N cap (#6) and auto-planner caps (#5). All optional; safe defaults.
 	const QUORUM_MAX = Math.max(2, Number(process.env.HARNESS_QUORUM_MAX ?? 3));
+	// Runaway-cost fail-safe for the multi-reviewer fan-out (mirrors QUORUM_MAX): an oversized `reviewers`
+	// value (model slip, bad sub-task prompt) can't spawn an unbounded number of billed reviewer subprocesses.
+	const REVIEWERS_MAX = Math.max(1, Number(process.env.HARNESS_REVIEWERS_MAX ?? 7));
 	const PLAN_MAX_NODES = Math.max(1, Number(process.env.HARNESS_PLAN_MAX_NODES ?? 24));
 	const PLAN_FANOUT_CAP = Math.max(1, Number(process.env.HARNESS_PLAN_FANOUT_CAP ?? 20));
 	const PLAN_RUN_ENABLED = process.env.HARNESS_PLAN_RUN === "1"; // default: dry-run only (no execution)
@@ -379,10 +421,20 @@ export default function harness(summon: ExtensionAPI) {
 				`${r.verify ? ` · verify ${r.verify.passed ? "PASS" : "FAIL"}` : ""} · ${r.meta.model} ${r.meta.elapsed_s.toFixed(0)}s]` +
 				`${r.verify && !r.verify.passed ? `\nverify output: ${r.verify.output.slice(-300)}` : ""}\n\n${r.artifact_excerpt}`;
 
+	// Append the (gated) governor back-pressure line to a tool result so the model can self-regulate fan-out
+	// width. No-op in the default config (no window budget ⇒ windowPct 0 ⇒ ""), so it never deters fan-out.
+	const withGovHint = (text: string): string => {
+		const hint = formatGovernorHint(gov.windowPct(), gov.queueDepth());
+		return hint ? `${text}\n\n${hint}` : text;
+	};
+
 	// Build a structured reviewer metaprompt embedding the original task, builder summary, and diff.
-	function reviewerPrompt(task: string, summary: string, diff: string): string {
+	// `lens` (optional) focuses an independent reviewer on one angle so a multi-reviewer pass gets
+	// diverse coverage (correctness / regressions / tests) instead of N identical opinions.
+	function reviewerPrompt(task: string, summary: string, diff: string, lens?: string): string {
 		return [
 			'ROLE: You are a code reviewer (the "reviewer" specialist) verifying a builder\'s work.',
+			...(lens ? ["", `REVIEW LENS: ${lens}`] : []),
 			"",
 			"TASK: Verify that the git diff below correctly implements the task, introduces no regressions, and meets all acceptance criteria.",
 			"",
@@ -443,7 +495,13 @@ export default function harness(summon: ExtensionAPI) {
 			review: Type.Optional(
 				Type.Boolean({
 					description:
-						"after a write-capable build completes 'done', auto-run the reviewer over the git diff; result fails unless the reviewer APPROVEs",
+						"after a write-capable build completes 'done', auto-run independent reviewers over the git diff (diverse lenses: correctness / regressions / tests); result fails unless a MAJORITY APPROVE (fail-closed)",
+				}),
+			),
+			reviewers: Type.Optional(
+				Type.Integer({
+					minimum: 1,
+					description: `how many independent reviewers when review:true (default 3, or 5 in ultra; capped at ${REVIEWERS_MAX}). Odd counts make the strict-majority verdict meaningful; each reviewer gets a distinct lens (correctness/regressions/tests) so the change is cross-checked from different angles instead of trusting one opinion`,
 				}),
 			),
 			transport: Type.Optional(
@@ -463,35 +521,40 @@ export default function harness(summon: ExtensionAPI) {
 			const reviewerBundle = registry.get("reviewer");
 
 			if (p.review && isWriteCapable && reviewerBundle) {
-				const outcome = await runWithReview(
+				// Fan review out to N INDEPENDENT reviewers, each on a different lens — diverse coverage beats
+				// one opinion (or N identical ones). The diff is captured once after the build and shared.
+				const nReviewers = Math.min(REVIEWERS_MAX, Math.max(1, p.reviewers ?? reviewersForMode(activeMode)));
+				let diff: string | null = null;
+				const getDiff = (): string => {
+					if (diff !== null) return diff;
+					try {
+						diff = execSync(`git -C ${JSON.stringify(root)} diff`, {
+							encoding: "utf8",
+							maxBuffer: 10 * 1024 * 1024,
+						});
+					} catch {
+						diff = "";
+					}
+					return diff;
+				};
+				const reviewers = Array.from({ length: nReviewers }, (_v, i) => async (b: SpawnResult) => {
+					const lens = REVIEW_LENSES[i % REVIEW_LENSES.length];
+					const rp = reviewerPrompt(p.prompt, b.artifact_excerpt, getDiff(), lens.instruction);
+					return runOne("reviewer", rp, `${task_id}-review-${lens.key}-${i}`, ctx);
+				});
+				const outcome = await runWithReviewers(
 					() => runOne(p.agent, p.prompt, task_id, ctx, p.verify, transport),
-					async (b) => {
-						let diff = "";
-						try {
-							diff = execSync(`git -C ${JSON.stringify(root)} diff`, {
-								encoding: "utf8",
-								maxBuffer: 10 * 1024 * 1024,
-							});
-						} catch {
-							diff = "";
-						}
-						const rp = reviewerPrompt(p.prompt, b.artifact_excerpt, diff);
-						return runOne("reviewer", rp, `${task_id}-review`, ctx);
-					},
+					reviewers,
 				);
 				const verdict = outcome.approved ? "APPROVED" : `REJECTED — ${outcome.reason}`;
-				const text =
-					fmt(outcome.build) +
-					"\n\n=== REVIEW: " +
-					verdict +
-					" ===\n\n" +
-					(outcome.review ? fmt(outcome.review) : "");
+				const reviewsText = outcome.reviews.map(fmt).join("\n\n---\n\n");
+				const text = `${fmt(outcome.build)}\n\n=== REVIEW (${outcome.reason}): ${verdict} ===\n\n${reviewsText}`;
 				return { content: [{ type: "text", text }], details: outcome, isError: !outcome.approved };
 			}
 
 			// Default path — transport threaded; oneshot behaviour byte-for-byte unchanged
 			const r = await runOne(p.agent, p.prompt, task_id, ctx, p.verify, transport);
-			return { content: [{ type: "text", text: fmt(r) }], details: r, isError: r.status === "failed" };
+			return { content: [{ type: "text", text: withGovHint(fmt(r)) }], details: r, isError: r.status === "failed" };
 		},
 	});
 
@@ -595,7 +658,11 @@ export default function harness(summon: ExtensionAPI) {
 				const text = outcome.winner
 					? `${fmt(outcome.winner)}\n\n=== QUORUM: ${outcome.agreement} via ${outcome.decidedBy} (${outcome.survivors.length}/${N} survived) ===`
 					: `quorum failed — 0/${N} candidates passed verify+contract`;
-				return { content: [{ type: "text", text }], details: { ...outcome, runId }, isError: !outcome.winner };
+				return {
+					content: [{ type: "text", text: withGovHint(text) }],
+					details: { ...outcome, runId },
+					isError: !outcome.winner,
+				};
 			} finally {
 				trace?.stop();
 			}
@@ -605,7 +672,7 @@ export default function harness(summon: ExtensionAPI) {
 	summon.registerTool({
 		name: "run_team",
 		label: "Run a named team (sequential stages, parallel steps)",
-		description: `Run a named team recipe — stages run sequentially, steps within a stage run in parallel. Available teams are loaded from global + project-local .summon/teams/ directories.`,
+		description: `Run a named team recipe — stages run sequentially, steps within a stage run in parallel. Loaded from global + project-local .summon/teams/ directories.\nAvailable teams: ${teamsDigest}`,
 		parameters: Type.Object({
 			team: Type.String({ description: 'name of the team to run (e.g. "build-review")' }),
 			vars: Type.Optional(
@@ -826,7 +893,8 @@ export default function harness(summon: ExtensionAPI) {
 		description:
 			"Run a named blueprint: a DAG of CODE nodes (the harness runs shell deterministically) and AGENT nodes " +
 			"(scoped specialists). Nodes run as soon as their depends_on are done (wide parallelism); a failed node " +
-			"fail-closes its dependents. Upstream output is available downstream via {{node.<id>}}.",
+			"fail-closes its dependents. Upstream output is available downstream via {{node.<id>}}.\n" +
+			`Available blueprints: ${blueprintsDigest}`,
 		parameters: Type.Object({
 			blueprint: Type.String({ description: "name of the blueprint to run" }),
 			vars: Type.Optional(
@@ -1015,6 +1083,40 @@ export default function harness(summon: ExtensionAPI) {
 		},
 	});
 
+	// The one-call plan+run+verify primitive (slice 2): orchestrate a goal end-to-end. Unlike plan_and_run
+	// (preview-by-default, gated behind HARNESS_PLAN_RUN), orchestrate ALWAYS runs — but only the parts that
+	// are safe to run unattended. The planner is read-only; generated AGENT nodes are sealed, tool-restricted,
+	// governed, verified workers (exactly what spawn_agents runs); generated CODE/shell nodes are force-gated
+	// (`forceApprovalOnWrite` in planAndRun) so they PAUSE for human approve_gate before anything irreversible.
+	summon.registerTool({
+		name: "orchestrate",
+		label: "Plan + run + verify a goal end-to-end",
+		description: `Decompose a natural-language GOAL into a validated DAG (frontier planner) and RUN it in one call: scoped specialist AGENT nodes execute inline and in parallel; deterministic CODE/shell nodes PAUSE for your approval (approve_gate / resume_run) so nothing irreversible runs unattended. The plan+fan-out+verify primitive for an open-ended goal you can't pre-decompose. Durable + resumable. Pass dry_run:true to preview the DAG without running.\nRegistry: ${digest}`,
+		parameters: Type.Object({
+			goal: Type.String({ description: "the goal to decompose, run, and verify" }),
+			vars: Type.Optional(
+				Type.Record(Type.String(), Type.String(), {
+					description: "template variables to fill {{placeholders}} in node prompts/commands",
+				}),
+			),
+			dry_run: Type.Optional(
+				Type.Boolean({ description: "return the validated DAG WITHOUT running it (preview only)" }),
+			),
+		}),
+		async execute(_id: string, p: any, _s: any, _u: any, ctx: any) {
+			try {
+				return await planAndRun(p.goal, p.vars, ctx, p.dry_run === true);
+			} catch (err) {
+				const msg = err instanceof Error ? err.message : String(err);
+				return {
+					content: [{ type: "text", text: `orchestrate failed: ${msg}` }],
+					isError: true,
+					details: undefined,
+				};
+			}
+		},
+	});
+
 	summon.registerTool({
 		name: "resume_run",
 		label: "Resume a durable run (crashed or approval-paused)",
@@ -1116,9 +1218,41 @@ export default function harness(summon: ExtensionAPI) {
 			);
 			if (session) session.append("run_finished", { status: "done" });
 			return {
-				content: [{ type: "text", text: results.map(fmt).join("\n\n---\n\n") }],
+				content: [{ type: "text", text: withGovHint(results.map(fmt).join("\n\n---\n\n")) }],
 				details: { results, runId },
 			};
+		},
+	});
+
+	// Orchestration doctrine injection: the motivation layer. The spawn_* tools are already live on the
+	// MAIN agent, but nothing told it WHEN to fan out — so it did substantial work alone. While mode != off
+	// this appends a delegate-by-default doctrine (+ the live roster and recipe catalog) to the main
+	// session's system prompt every turn. Returning undefined for 'off' restores the base prompt. The hook
+	// is error-caught upstream, so a bad turn can never wedge the session.
+	summon.on?.("before_agent_start", async (event) => {
+		if (activeMode === "off") return undefined;
+		const doctrine = buildOrchestrationDoctrine(activeMode, {
+			registryDigest: digest,
+			teams: teamsDigest,
+			blueprints: blueprintsDigest,
+			reviewers: reviewersForMode(activeMode),
+		});
+		if (!doctrine) return undefined;
+		return { systemPrompt: `${event.systemPrompt}\n\n${doctrine}` };
+	});
+
+	// Orchestration dial: flip the resident agent's delegate-by-default intensity live (mirrors /harness-scale).
+	summon.registerCommand?.("orchestrate", {
+		description:
+			"Orchestration dial: show | off | auto | ultra — control delegate-by-default fan-out + adversarial review.",
+		handler: async (args: string, ctx: any) => {
+			const a = (args ?? "").trim().toLowerCase();
+			if (!a || a === "show") {
+				ctx?.ui?.notify?.(`orchestration: ${orchestrationLabel(activeMode)} (set: off | auto | ultra)`, "info");
+				return;
+			}
+			activeMode = resolveOrchestrationMode(a);
+			ctx?.ui?.notify?.(`orchestration → ${orchestrationLabel(activeMode)}`, "info");
 		},
 	});
 

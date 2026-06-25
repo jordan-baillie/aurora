@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import {
 	type AgentBundle,
+	aggregateReviews,
 	appendExpertiseNote,
 	assertSpawnAuth,
 	authExtensions,
@@ -25,12 +26,14 @@ import {
 	parseExpertiseNote,
 	parseQuorumPick,
 	parseVerdict,
+	REVIEW_LENSES,
 	registryDigest,
 	registryIndex,
 	registryView,
 	reviewDecision,
 	runQuorum,
 	runWithReview,
+	runWithReviewers,
 	type SpawnResult,
 	SYS_HEADER,
 	spawnEnv,
@@ -394,6 +397,85 @@ test("runWithReview: enabled=false + build done → review not called, approved 
 	assert.equal(reviewed, false, "review fn must not be called when review is disabled");
 	assert.equal(outcome.approved, true);
 	assert.equal(outcome.review, undefined);
+});
+
+// ── multi-reviewer adversarial verification tests (inject fakes — no subprocess) ────────
+test("aggregateReviews: build not done → not approved, no tally", () => {
+	const d = aggregateReviews("failed", []);
+	assert.equal(d.approved, false);
+	assert.ok(d.reason.includes("failed"));
+});
+
+test("aggregateReviews: strict majority APPROVE → approved", () => {
+	const d = aggregateReviews("done", ["## verdict\nAPPROVE", "## verdict\nAPPROVE", "## verdict\nREJECT"]);
+	assert.equal(d.approved, true);
+	assert.deepEqual(d.tally, { approve: 2, reject: 1, unknown: 0 });
+});
+
+test("aggregateReviews: tie (1/2) does NOT pass — strict majority, fail-closed", () => {
+	const d = aggregateReviews("done", ["## verdict\nAPPROVE", "## verdict\nREJECT"]);
+	assert.equal(d.approved, false);
+});
+
+test("aggregateReviews: unparseable verdicts count as unknown and fail closed", () => {
+	const d = aggregateReviews("done", ["looks fine", "## verdict\nAPPROVE"]);
+	assert.equal(d.approved, false, "1 APPROVE of 2 is not a strict majority");
+	assert.deepEqual(d.tally, { approve: 1, reject: 0, unknown: 1 });
+});
+
+test("aggregateReviews: no reviewer output → not approved", () => {
+	const d = aggregateReviews("done", []);
+	assert.equal(d.approved, false);
+	assert.ok(d.reason.includes("no reviewer"));
+});
+
+test("runWithReviewers: build failed → reviewers not called, approved false", async () => {
+	let calls = 0;
+	const outcome = await runWithReviewers(
+		async () => mk("failed"),
+		[
+			async () => {
+				calls++;
+				return mk("done");
+			},
+		],
+	);
+	assert.equal(calls, 0, "reviewers must not run when the build did not reach done");
+	assert.equal(outcome.approved, false);
+	assert.equal(outcome.reviews.length, 0);
+});
+
+test("runWithReviewers: majority APPROVE across N reviewers → approved, all reviews retained", async () => {
+	const verdicts = ["## verdict\nAPPROVE", "## verdict\nAPPROVE", "## verdict\nREJECT"];
+	const outcome = await runWithReviewers(
+		async () => mk("done"),
+		verdicts.map((v) => async () => ({ ...mk("done"), artifact_excerpt: v })),
+	);
+	assert.equal(outcome.approved, true);
+	assert.equal(outcome.reviews.length, 3);
+	assert.deepEqual(outcome.tally, { approve: 2, reject: 1, unknown: 0 });
+});
+
+test("runWithReviewers: enabled=false → reviewers not called, approved tracks build", async () => {
+	let calls = 0;
+	const outcome = await runWithReviewers(
+		async () => mk("done"),
+		[
+			async () => {
+				calls++;
+				return mk("done");
+			},
+		],
+		{ enabled: false },
+	);
+	assert.equal(calls, 0);
+	assert.equal(outcome.approved, true);
+});
+
+test("REVIEW_LENSES: at least 3 distinct lenses for diverse coverage", () => {
+	assert.ok(REVIEW_LENSES.length >= 3);
+	const keys = new Set(REVIEW_LENSES.map((l) => l.key));
+	assert.equal(keys.size, REVIEW_LENSES.length, "lens keys must be distinct");
 });
 
 // ── runQuorum / best-of-N tests (frozen, inject fakes — no subprocess) ───────────────

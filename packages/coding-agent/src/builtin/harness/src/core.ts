@@ -897,6 +897,76 @@ export async function runWithReview(
 	return { build: b, review: r, approved: d.approved, reason: d.reason };
 }
 
+// ── multi-reviewer adversarial verification (pure + injectable → unit-testable) ──────────────
+// Diverse review lenses: independent reviewers each attack the change from a DIFFERENT angle, which
+// catches failure modes a single reviewer (or N identical reviewers) would miss. Assigned round-robin.
+export const REVIEW_LENSES: ReadonlyArray<{ key: string; instruction: string }> = [
+	{
+		key: "correctness",
+		instruction:
+			"Focus on CORRECTNESS: does the change actually do what the task asked, with no logic errors, off-by-ones, or broken edge cases?",
+	},
+	{
+		key: "regressions",
+		instruction:
+			"Focus on REGRESSIONS & SAFETY: could this break existing behaviour, callers, or data? Look for unhandled errors and unsafe operations.",
+	},
+	{
+		key: "tests",
+		instruction:
+			"Focus on TESTS & EDGE-CASES: is the change covered, and are the failure/boundary cases handled and verified?",
+	},
+];
+
+// Aggregate N reviewer verdicts into one decision. STRICT-MAJORITY APPROVE wins; anything short of a
+// majority (ties, REJECTs, unparseable) fails closed — mirrors reviewDecision's single-reviewer policy.
+export function aggregateReviews(
+	buildStatus: SpawnResult["status"],
+	reviewTexts: string[],
+): { approved: boolean; reason: string; tally: { approve: number; reject: number; unknown: number } } {
+	const tally = { approve: 0, reject: 0, unknown: 0 };
+	if (buildStatus !== "done") return { approved: false, reason: `build ${buildStatus} — not reviewed`, tally };
+	if (reviewTexts.length === 0) return { approved: false, reason: "no reviewer output", tally };
+	for (const t of reviewTexts) {
+		const v = parseVerdict(t);
+		if (v === "APPROVE") tally.approve++;
+		else if (v === "REJECT") tally.reject++;
+		else tally.unknown++;
+	}
+	const approved = tally.approve > reviewTexts.length / 2; // strict majority, fail-closed
+	const reason = `${tally.approve}/${reviewTexts.length} reviewers APPROVE (reject ${tally.reject}, unclear ${tally.unknown})`;
+	return { approved, reason, tally };
+}
+
+export interface MultiReviewOutcome {
+	build: SpawnResult;
+	reviews: SpawnResult[];
+	approved: boolean;
+	reason: string;
+	tally: { approve: number; reject: number; unknown: number };
+}
+
+// Generic, injectable build→multi-review orchestration (no Pi/subprocess knowledge → unit-testable).
+// Reviewers run CONCURRENTLY; the build is passed straight through when it didn't reach 'done'.
+export async function runWithReviewers(
+	build: () => Promise<SpawnResult>,
+	reviewers: Array<(b: SpawnResult) => Promise<SpawnResult>>,
+	opts: { enabled?: boolean } = {},
+): Promise<MultiReviewOutcome> {
+	const b = await build();
+	const empty = { approve: 0, reject: 0, unknown: 0 };
+	if (opts.enabled === false)
+		return { build: b, reviews: [], approved: b.status === "done", reason: "review disabled", tally: empty };
+	if (b.status !== "done")
+		return { build: b, reviews: [], approved: false, reason: `build ${b.status} — not reviewed`, tally: empty };
+	const reviews = await Promise.all(reviewers.map((r) => r(b)));
+	const d = aggregateReviews(
+		b.status,
+		reviews.map((r) => r.artifact_excerpt ?? ""),
+	);
+	return { build: b, reviews, approved: d.approved, reason: d.reason, tally: d.tally };
+}
+
 // ── best-of-N / quorum (pure + injectable → unit-testable, mirrors runWithReview) ─────────────
 // Spawn K candidate attempts of one agent, keep only those that passed deterministic verify + contract
 // (status === "done" — see finalizeResult), pick a winner by objective majority vote among identical
